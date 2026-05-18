@@ -1,0 +1,61 @@
+[00:00:00 - 00:00:04] and different roles. Yeah.
+[00:00:08 - 00:00:09] Let me just check if we did.
+[00:00:11 - 00:00:19] So I think we did not discuss the lifecycle calendar that much.
+[00:00:20 - 00:00:23] So if you so for the
+[00:00:24 - 00:00:27] we discuss the allocation of the management.
+[00:00:27 - 00:00:31] So for the lifecycle calendar, so you can create different lifecycle
+[00:00:32 - 00:00:35] per specific criteria that you want.
+[00:00:36 - 00:00:46] Let's say for specific subclass and let's say region, you can have a lifecycle of just two
+[00:00:46 - 00:00:51] per cycle of phase three five. So you can have different lifecycle phase.
+[00:00:52 - 00:00:57] Now this lifecycle phase that you can see from here, these are all loaded. So these are preloaded.
+[00:00:57 - 00:01:07] You can load it through this table. So there is a table. There's a staging table that will hold all of this
+[00:01:09 - 00:01:16] lifecycle phases. So there is no UI at the moment where you can set up all these lifecycle
+[00:01:16 - 00:01:21] phases. These are just loaded through the staging table.
+[00:01:22 - 00:01:25] So, but the idea is you can have different lifecycle
+[00:01:27 - 00:01:31] phase setup for a specific criteria.
+[00:01:32 - 00:01:35] Like in this example, we have four different lifecycle phases.
+[00:01:38 - 00:01:46] If you want to look at the date or whatever the setup that we have, so you can go to the
+[00:01:47 - 00:02:00] manage workbook. In the innovation workbench, you can do a query from here.
+[00:02:05 - 00:02:12] So from here, let's say I just want to see what lifecycle phase has been loaded in this environment.
+[00:02:12 - 00:02:31] There's nothing. Maybe the team loaded directly to the
+[00:02:33 - 00:02:40] not understanding table, but directly on the internal table. But this is the table that you will use if
+[00:02:40 - 00:03:00] you're going to load your lifecycle phases. And the details what file we need to use is in the
+[00:03:00 - 00:03:08] RAP interface document. Right? Yes, I will leave it to you. So you can see we have here the
+[00:03:10 - 00:03:20] the call and learn name. Those are your call and names. Start in the
+[00:03:20 - 00:03:31] phase type. So let's say for the first phase, it will be your initial location, second is
+[00:03:31 - 00:03:39] this code already. So you can have an up to six lifecycle phases from here. And then assertment
+[00:03:41 - 00:03:50] duration. So you can define all the here from here. You can also
+[00:03:51 - 00:04:03] update this table directly from innovation workbench. And the the encurs for each
+[00:04:04 - 00:04:09] like what do you use to have in there? Like how to define when the phase will start? Is it like
+[00:04:09 - 00:04:14] based on the certain start and end date? Yeah. So it is only based on the assertment
+[00:04:15 - 00:04:39] start date. And so you can use either from start humming this from start or how many days
+[00:04:40 - 00:04:58] before end. So you can define up to six lifecycle phases. And then so this example here
+[00:04:58 - 00:05:17] or replenishment. So each rule category, you can define if it will use a lifecycle phase for
+[00:05:19 - 00:05:24] its rules. Just like for example here, we can use a rule parameter for
+[00:05:24 - 00:05:30] custom date using lifecycle phase. So you can define this in the
+[00:05:32 - 00:05:40] system configuration. So the next cycle calendar setup here is not mandatory and like a lot.
+[00:05:40 - 00:05:49] And it is not sure. And I don't necessarily have a lifecycle active to be replenished.
+[00:05:50 - 00:05:53] Yes. Define start and end date when you want to replenish it.
+[00:05:54 - 00:06:01] Yes. So this one it just depends on your if it is eligible or if it is asserted. So there is
+[00:06:02 - 00:06:09] unlike large where you have where you need the specific range or identification needs to be asserted
+[00:06:09 - 00:06:17] first. And also lifecycle active. So here there is no lifecycle active concept. It is just what is
+[00:06:18 - 00:06:23] what is the range, what is the asserted item location at the moment.
+[00:06:24 - 00:06:33] So the lifecycle there is optional. Actually when you receive the provision environment,
+[00:06:33 - 00:06:42] this will be by default, this will be the activated. You need to enable it in the system configuration.
+[00:06:43 - 00:06:55] So you need to enable the custom dates. If not it will be just like let's say for example,
+[00:06:55 - 00:07:03] this one in this way it is not enabled. So you will not see the custom date or the lifecycle
+[00:07:03 - 00:07:16] active. So you need to enable it first. Now once you define all the rules, so the workflow is you
+[00:07:16 - 00:07:19] will define all the possible rules first in the room management.
+[00:07:21 - 00:07:28] Okay. Once you know the rules of for example here, I have I have one auto approved by define there
+[00:07:28 - 00:07:37] three defined cross dot came. Okay. There are eight different initial location rules. Okay. And there
+[00:07:37 - 00:07:49] are 19 or 10. So these are just possible rules at the moment. But at this point, we don't know if
+[00:07:49 - 00:07:56] this rules are being used in the batch or in what if or different strategies, custom strategies to
+[00:07:56 - 00:08:05] be used for what if runs. So to use. Yep. Marin. So for the lifecycle phases, say we create a lifecycle
+[00:08:05 - 00:08:13] phase. Similar to large can we use that lifecycle phase to write rules to save something is an
+[00:08:13 - 00:08:21] initial allocation phase just making a like phase one. I want to use X number of weeks of supply
+[00:08:21 - 00:08:30] for replenishment. And what's the cost? Okay. So you can create different rules for that one.
+[00:08:32 - 00:08:39] So I thought like there were limitations to what comes in as an attribute. So I was wondering if
+[00:08:39 - 00:08:48] it if lifecycle would work as an attribute. Yeah, it is not an attribute, but it is a different
+[00:08:50 - 00:08:56] rule parameter. So it is a rule parameter, not an attribute. So from here, let's say I want to create
+[00:08:57 - 00:09:06] a specific let's say my time. Let's say for initial allocation.
+[00:09:08 - 00:09:16] Because we are having a separate initial allocation. Right. Let's say for maturity, I will use time supply.

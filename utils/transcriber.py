@@ -31,14 +31,26 @@ def _write_transcript(segments: list[dict], output_path: Path) -> str:
     return transcript
 
 
+def _format_transcript(segments: list[dict]) -> str:
+    lines: list[str] = []
+    for segment in segments:
+        text = str(segment.get("text", "")).strip()
+        if not text:
+            continue
+        start = _format_ts(float(segment.get("start", 0.0)))
+        end = _format_ts(float(segment.get("end", segment.get("start", 0.0))))
+        lines.append(f"[{start} - {end}] {text}")
+    return "\n".join(lines).strip()
+
+
 def transcribe_video(
     video_path: str,
     *,
     model_size: str = "base",
-    output_path: str | Path = "outputs/transcript.txt",
+    output_path: str | Path | None = "outputs/transcript.txt",
     on_progress: ProgressCb = None,
 ) -> dict:
-    """Transcribe a video file locally with faster-whisper and write a .txt file."""
+    """Transcribe a video file locally with faster-whisper."""
     try:
         from faster_whisper import WhisperModel
     except ImportError as exc:
@@ -69,14 +81,17 @@ def transcribe_video(
             pct = int(min(95, (segment["end"] / duration) * 95))
             on_progress("Transcribing audio", pct)
 
-    transcript_text = _write_transcript(segments, Path(output_path))
+    if output_path is None:
+        transcript_text = _format_transcript(segments)
+    else:
+        transcript_text = _write_transcript(segments, Path(output_path))
     if on_progress:
-        on_progress("Transcript saved", 100)
+        on_progress("Transcript ready", 100)
 
     return {
         "segments": segments,
         "text": transcript_text,
-        "path": str(output_path),
+        "path": str(output_path) if output_path is not None else "",
         "language": getattr(info, "language", None),
         "language_probability": float(getattr(info, "language_probability", 0.0) or 0.0),
     }

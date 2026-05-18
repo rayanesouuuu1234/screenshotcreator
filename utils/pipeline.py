@@ -6,11 +6,39 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
+from PIL import Image, ImageStat
+
 from utils.exporter import create_screenshots_pdf
 from utils.scene_detector import detect_scenes
 from utils.transcriber import transcribe_video
 
 ProgressCb = Callable[[str, int], None] | None
+MIN_FRAME_BRIGHTNESS = 15.0
+MIN_FRAME_VARIANCE = 100.0
+
+
+def _is_visually_empty_frame(image_path: str | Path) -> bool:
+    with Image.open(image_path) as image:
+        grayscale = image.convert("L")
+        stats = ImageStat.Stat(grayscale)
+    mean_brightness = float(stats.mean[0])
+    pixel_variance = float(stats.var[0])
+    return mean_brightness < MIN_FRAME_BRIGHTNESS or pixel_variance < MIN_FRAME_VARIANCE
+
+
+def _filter_visually_empty_screenshots(screenshots: list[dict]) -> tuple[list[dict], int]:
+    kept: list[dict] = []
+    skipped = 0
+    for screenshot in screenshots:
+        image_path = Path(str(screenshot.get("path", "")))
+        if not image_path.is_file():
+            kept.append(screenshot)
+            continue
+        if _is_visually_empty_frame(image_path):
+            skipped += 1
+            continue
+        kept.append(screenshot)
+    return kept, skipped
 
 
 def run_screenshot_pipeline(
@@ -38,15 +66,22 @@ def run_screenshot_pipeline(
         on_progress=lambda message, pct: progress(message, int(pct * 0.55)),
     )
 
-    progress("Generating PDF", 58)
-    pdf_path = create_screenshots_pdf(screenshots, video_filename=filename)
+    screenshots, skipped_empty_frames = _filter_visually_empty_screenshots(screenshots)
+    print(f"Skipped {skipped_empty_frames} visually empty frame(s) before PDF assembly.")
 
-    progress("Transcribing with faster-whisper", 64)
+    progress("Transcribing with faster-whisper", 58)
     transcript = transcribe_video(
         video_path,
         model_size=whisper_model_size,
-        output_path=Path("outputs") / "transcript.txt",
-        on_progress=lambda message, pct: progress(message, 64 + int(pct * 0.34)),
+        output_path=None,
+        on_progress=lambda message, pct: progress(message, 58 + int(pct * 0.34)),
+    )
+
+    progress("Generating PDF", 94)
+    pdf_path = create_screenshots_pdf(
+        screenshots,
+        video_filename=filename,
+        transcript_segments=transcript.get("segments") or [],
     )
 
     result: dict[str, Any] = {
@@ -58,6 +93,7 @@ def run_screenshot_pipeline(
             "whisper_model_size": whisper_model_size,
         },
         "screenshots": screenshots,
+        "skipped_empty_frames": skipped_empty_frames,
         "pdf_path": str(pdf_path),
         "transcript": transcript,
     }

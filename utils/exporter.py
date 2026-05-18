@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -27,6 +28,10 @@ def _safe_stem(filename: str) -> str:
     stem = Path(filename).stem or "video"
     stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._")
     return stem or "video"
+
+
+def _default_pdf_name(video_filename: str) -> str:
+    return f"{_safe_stem(video_filename)}_{date.today().isoformat()}.pdf"
 
 
 def _font(size: int, *, italic: bool = False) -> ImageFont.ImageFont:
@@ -106,7 +111,7 @@ def create_screenshots_pdf(
         raise ValueError("No screenshots were generated, so a PDF cannot be created.")
 
     PDF_DIR.mkdir(parents=True, exist_ok=True)
-    out = Path(output_path) if output_path else PDF_DIR / f"{_safe_stem(video_filename)}_screenshots.pdf"
+    out = Path(output_path) if output_path else PDF_DIR / _default_pdf_name(video_filename)
 
     pages: list[Image.Image] = []
     label_font = _font(22)

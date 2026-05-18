@@ -414,19 +414,20 @@ def run_app() -> None:
 
     st.subheader("Step 2: Configure & Generate")
     st.caption("Default settings work well for most videos. Expand Advanced Settings only if needed.")
+    change_threshold = st.slider(
+        "Screenshot sensitivity — Higher = fewer screenshots · Lower = more screenshots",
+        min_value=1.0,
+        max_value=40.0,
+        value=10.0,
+        step=0.5,
+        help="Adjusts how much the screen must change before a screenshot is captured.",
+    )
+    st.caption(f"Current sensitivity threshold: {change_threshold:.1f}% changed area")
+
     with st.expander("⚙️ Advanced Settings", expanded=False):
         st.markdown("#### Detection settings")
-        col_a, col_b, col_c = st.columns(3)
+        col_a, col_b = st.columns(2)
         with col_a:
-            change_threshold = st.slider(
-                "Minimum changed area (%)",
-                min_value=1.0,
-                max_value=40.0,
-                value=10.0,
-                step=0.5,
-                help="Lower values capture more screenshots. Higher values ignore smaller UI updates.",
-            )
-        with col_b:
             min_gap = st.slider(
                 "Minimum gap between screenshots (seconds)",
                 min_value=0.5,
@@ -434,7 +435,7 @@ def run_app() -> None:
                 value=3.0,
                 step=0.5,
             )
-        with col_c:
+        with col_b:
             sample_interval = st.slider(
                 "Sample every N seconds",
                 min_value=0.25,
@@ -517,6 +518,14 @@ def run_app() -> None:
         render_step_indicator(uploaded, result, False),
         unsafe_allow_html=True,
     )
+    if result:
+        captured_count = len(result.get("screenshots") or [])
+        skipped_count = int(result.get("skipped_empty_frames") or 0)
+        st.success(
+            f"✓ {captured_count} screenshots captured · "
+            f"{skipped_count} skipped (blank or black frames)"
+        )
+
     if not result:
         st.info("The first frame is always included. Later frames are kept only when the screen changes enough to pass the threshold.")
         return
@@ -526,7 +535,6 @@ def run_app() -> None:
     screenshots = result["screenshots"]
     transcript = result.get("transcript") or {}
     transcript_text = str(transcript.get("text") or "")
-    transcript_path = Path(str(transcript.get("path") or ""))
     st.subheader("Step 3: Download & Open in AI")
     st.markdown(
         f'<p class="muted"><b>{len(screenshots)}</b> screenshots extracted from '
@@ -534,34 +542,18 @@ def run_app() -> None:
         unsafe_allow_html=True,
     )
     st.markdown(
-        '<p class="instruction-line">Download both files, copy the prompt, then open your preferred AI model and attach the files + paste the prompt.</p>',
+        '<p class="instruction-line">Download the PDF, copy the prompt, then open your preferred AI model and attach the PDF + paste the prompt.</p>',
         unsafe_allow_html=True,
     )
 
-    download_cols = st.columns(2)
-    with download_cols[0]:
-        st.markdown("#### Screenshot PDF")
-        st.caption("Attach this to your AI model")
-        if pdf_path.is_file():
-            st.download_button(
-                "Download Screenshot PDF",
-                data=pdf_path.read_bytes(),
-                file_name=pdf_path.name,
-                mime="application/pdf",
-                use_container_width=True,
-            )
-    with download_cols[1]:
-        st.markdown("#### Transcript")
-        st.caption("Attach this to your AI model")
-        if transcript_path.is_file():
-            transcript_bytes = transcript_path.read_bytes()
-        else:
-            transcript_bytes = transcript_text.encode("utf-8")
+    st.markdown("#### Screenshot PDF")
+    st.caption("Transcript context is embedded in this PDF. Attach it to your AI model.")
+    if pdf_path.is_file():
         st.download_button(
-            "Download Transcript",
-            data=transcript_bytes,
-            file_name="transcript.txt",
-            mime="text/plain",
+            "Download Screenshot PDF",
+            data=pdf_path.read_bytes(),
+            file_name=pdf_path.name,
+            mime="application/pdf",
             use_container_width=True,
         )
 

@@ -13,10 +13,19 @@ import cv2
 import streamlit as st
 import streamlit.components.v1 as components
 
+from utils.automation import (
+    build_completion_message,
+    encode_service_account_json,
+    post_slack_notification,
+    send_email_delivery,
+    split_emails,
+    upload_to_google_drive,
+)
 from utils.pipeline import run_screenshot_pipeline
 
 APP_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = APP_DIR / "outputs"
+LAST_RESULT_PATH = OUTPUT_DIR / "last_result.json"
 PROMPT_PATH = APP_DIR / "consultant_ai_prompt.md"
 MAX_UPLOAD_BYTES = 2000 * 1024 * 1024
 
@@ -24,64 +33,146 @@ os.chdir(APP_DIR)
 
 st.set_page_config(
     page_title="Video Screenshot PDF",
-    page_icon="🎞️",
+    page_icon="logo.jpeg",
     layout="wide",
 )
 
 APP_CSS = """
 <style>
-  #MainMenu, footer, header {visibility: hidden;}
+  #MainMenu, footer, header {
+    visibility: hidden;
+  }
+  :root {
+    --bg: #07080c;
+    --surface: rgba(15, 18, 28, 0.78);
+    --surface-strong: rgba(22, 26, 39, 0.92);
+    --border: rgba(148, 163, 184, 0.16);
+    --border-strong: rgba(96, 165, 250, 0.38);
+    --text: #f8fafc;
+    --muted: #9ca3af;
+    --muted-strong: #cbd5e1;
+    --blue: #60a5fa;
+    --violet: #8b5cf6;
+    --green: #22c55e;
+    --shadow: 0 22px 70px rgba(0, 0, 0, 0.42);
+  }
+  @keyframes fadeUp {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes glowPulse {
+    0%, 100% {
+      box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.18);
+    }
+    50% {
+      box-shadow: 0 0 0 7px rgba(96, 165, 250, 0.02);
+    }
+  }
   html, body, [class*="css"] {
     font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
   .stApp {
     background:
-      radial-gradient(circle at top left, rgba(59,130,246,0.14), transparent 28%),
-      radial-gradient(circle at top right, rgba(168,85,247,0.10), transparent 25%),
-      #080808;
+      radial-gradient(circle at 12% 0%, rgba(96, 165, 250, 0.18), transparent 28%),
+      radial-gradient(circle at 88% 4%, rgba(139, 92, 246, 0.16), transparent 30%),
+      linear-gradient(180deg, #0b1020 0%, var(--bg) 42%, #050609 100%);
+    color: var(--text);
   }
   .block-container {
     max-width: 1100px;
-    padding-top: 2.5rem;
+    padding-top: 2.25rem;
+    padding-bottom: 4rem;
+    animation: fadeUp 360ms ease-out;
   }
   .hero-card {
-    padding: 0 0 1rem;
-    border-bottom: 1px solid rgba(63,63,70,0.65);
+    position: relative;
+    overflow: hidden;
+    background:
+      linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(17, 24, 39, 0.78)),
+      radial-gradient(circle at top right, rgba(96, 165, 250, 0.22), transparent 32%);
+    border: 1px solid var(--border);
+    border-radius: 28px;
+    padding: 2rem 2.25rem;
+    box-shadow: var(--shadow);
     margin-bottom: 1.25rem;
+  }
+  .hero-card:before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, rgba(255,255,255,0.08), transparent 35%);
+    pointer-events: none;
   }
   .hero-card h1 {
     margin: 0 0 0.5rem;
-    font-size: 2.5rem;
-    letter-spacing: -0.04em;
+    font-size: clamp(2.2rem, 5vw, 3.45rem);
+    line-height: 1;
+    letter-spacing: -0.06em;
+    color: var(--text);
   }
   .hero-card p {
-    color: #a1a1aa;
-    font-size: 1rem;
-    line-height: 1.55;
+    color: var(--muted-strong);
+    font-size: 1.02rem;
+    line-height: 1.65;
     margin-bottom: 0;
+    max-width: 760px;
   }
   [data-testid="stFileUploader"] section {
-    background: linear-gradient(135deg, #0f0f0f, #1a1a1a);
-    border: 1px dashed #3b82f6;
-    border-radius: 14px;
-    padding: 18px;
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.84), rgba(30, 41, 59, 0.55));
+    border: 1px dashed rgba(96, 165, 250, 0.56);
+    border-radius: 20px;
+    padding: 1.2rem;
+    transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
+  }
+  [data-testid="stFileUploader"] section:hover {
+    border-color: rgba(147, 197, 253, 0.9);
+    background: linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.78));
+    transform: translateY(-1px);
   }
   .stButton > button[kind="primary"],
   .stDownloadButton > button {
-    border-radius: 12px;
-    border: 1px solid #333;
-    background: linear-gradient(135deg, #2563eb, #7c3aed);
+    min-height: 3rem;
+    border-radius: 16px;
+    border: 1px solid rgba(147, 197, 253, 0.28);
+    background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
     color: white;
-    font-weight: 700;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    box-shadow: 0 14px 34px rgba(37, 99, 235, 0.28);
+    transition: transform 160ms ease, box-shadow 160ms ease, filter 160ms ease;
+  }
+  .stButton > button[kind="primary"]:hover,
+  .stDownloadButton > button:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.08);
+    box-shadow: 0 20px 45px rgba(37, 99, 235, 0.34);
+  }
+  .stButton > button:not([kind="primary"]) {
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: rgba(15, 23, 42, 0.78);
+    color: var(--text);
+    transition: border-color 160ms ease, transform 160ms ease;
+  }
+  .stButton > button:not([kind="primary"]):hover {
+    border-color: var(--border-strong);
+    transform: translateY(-1px);
   }
   .shot-card {
-    background: linear-gradient(135deg, #0f0f0f, #1a1a1a);
-    border: 1px solid #27272a;
-    border-radius: 14px;
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.82), rgba(17, 24, 39, 0.76));
+    border: 1px solid var(--border);
+    border-radius: 18px;
     padding: 0.8rem;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.26);
   }
   .muted {
-    color: #a1a1aa;
+    color: var(--muted);
     font-size: 0.95rem;
   }
   .section-rule {
@@ -93,53 +184,109 @@ APP_CSS = """
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.6rem;
-    margin: 0.25rem 0 1.4rem;
+    margin: 1rem 0 1.55rem;
   }
   .step-card {
-    border: 1px solid #27272a;
-    background: rgba(15,15,15,0.72);
+    border: 1px solid var(--border);
+    background: rgba(15, 23, 42, 0.7);
     border-radius: 999px;
-    padding: 0.7rem 0.85rem;
+    padding: 0.72rem 0.9rem;
     display: flex;
     align-items: center;
     gap: 0.6rem;
+    backdrop-filter: blur(18px);
   }
   .step-card.active {
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 1px rgba(59,130,246,0.25);
+    border-color: var(--border-strong);
+    animation: glowPulse 2.4s ease-in-out infinite;
   }
   .step-card.complete {
-    border-color: #16a34a;
-    background: rgba(22,101,52,0.16);
+    border-color: rgba(34, 197, 94, 0.42);
+    background: rgba(20, 83, 45, 0.24);
   }
   .step-number {
-    color: #d4d4d8;
+    color: #dbeafe;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 1.7rem;
     height: 1.7rem;
     border-radius: 999px;
-    background: #27272a;
+    background: rgba(51, 65, 85, 0.92);
     font-weight: 800;
     flex: 0 0 auto;
   }
   .step-card.active .step-number {
-    background: #2563eb;
+    background: linear-gradient(135deg, var(--blue), var(--violet));
     color: #fff;
   }
   .step-card.complete .step-number {
-    background: #16a34a;
+    background: var(--green);
     color: #fff;
   }
   .step-title {
-    color: #f4f4f5;
+    color: var(--text);
     font-weight: 800;
   }
   .instruction-line {
-    color: #a1a1aa;
+    color: var(--muted);
     font-size: 0.95rem;
     margin: 0.25rem 0 1rem;
+  }
+  .project-instructions {
+    color: #dbeafe;
+    font-size: 1.06rem;
+    line-height: 1.7;
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.14), rgba(124, 58, 237, 0.12));
+    border: 1px solid rgba(96, 165, 250, 0.24);
+    border-radius: 18px;
+    padding: 1rem 1.1rem;
+    margin: 0.35rem 0 1.15rem;
+  }
+  [data-testid="stVerticalBlockBorderWrapper"] {
+    border-color: var(--border) !important;
+    border-radius: 20px !important;
+    background: rgba(15, 23, 42, 0.42);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18);
+  }
+  [data-testid="stExpander"] {
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: rgba(15, 23, 42, 0.58);
+    overflow: hidden;
+  }
+  [data-testid="stExpander"] details summary {
+    font-weight: 750;
+  }
+  div[data-testid="stAlert"] {
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    background: rgba(15, 23, 42, 0.72);
+  }
+  div[data-testid="stStatusWidget"] {
+    border-radius: 18px;
+  }
+  div[data-testid="stSlider"] {
+    padding-top: 0.25rem;
+  }
+  .stTextInput input,
+  .stTextArea textarea,
+  .stSelectbox div[data-baseweb="select"] > div {
+    border-radius: 14px !important;
+    border-color: var(--border) !important;
+    background-color: rgba(15, 23, 42, 0.86) !important;
+    color: var(--text) !important;
+  }
+  hr {
+    border-color: rgba(148, 163, 184, 0.16);
+    margin: 1.6rem 0;
+  }
+  h2, h3, h4 {
+    color: var(--text);
+    letter-spacing: -0.035em;
+  }
+  p, label, span {
+    color: inherit;
   }
   @media (max-width: 800px) {
     .stepper {
@@ -179,6 +326,53 @@ def load_consultant_prompt() -> str:
     if PROMPT_PATH.is_file():
         return PROMPT_PATH.read_text(encoding="utf-8")
     return "Attach the screenshot PDF and transcript, then summarize the walkthrough."
+
+
+def _env(name: str) -> str:
+    return os.getenv(name, "").strip()
+
+
+def _path_exists(path_value: str) -> bool:
+    return bool(path_value) and Path(path_value).is_file()
+
+
+def is_restorable_result(result: dict) -> bool:
+    if not isinstance(result, dict):
+        return False
+    if not _path_exists(str(result.get("pdf_path") or "")):
+        return False
+    screenshots = result.get("screenshots") or []
+    return any(_path_exists(str(shot.get("path") or "")) for shot in screenshots)
+
+
+def load_last_result() -> dict | None:
+    if not LAST_RESULT_PATH.is_file():
+        return None
+    try:
+        result = json.loads(LAST_RESULT_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return result if is_restorable_result(result) else None
+
+
+def restore_last_result() -> None:
+    if st.session_state.get("last_result"):
+        return
+    result = load_last_result()
+    if result:
+        st.session_state["last_result"] = result
+        st.session_state["restored_last_result"] = True
+
+
+def save_last_result(result: dict) -> None:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    LAST_RESULT_PATH.write_text(json.dumps(result, indent=2), encoding="utf-8")
+
+
+def clear_current_result() -> None:
+    st.session_state.pop("last_result", None)
+    st.session_state.pop("restored_last_result", None)
+    clear_outputs()
 
 
 def render_step_indicator(uploaded, result: dict | None, is_processing: bool = False) -> str:
@@ -364,6 +558,131 @@ def render_open_ai_buttons(prompt_text: str) -> None:
     components.html(component_html, height=96)
 
 
+def render_automation_settings() -> dict:
+    settings = {
+        "drive_enabled": False,
+        "drive_folder_id": "",
+        "drive_service_account_file": "",
+        "drive_service_account_json": "",
+        "slack_enabled": False,
+        "slack_webhook_url": "",
+        "email_enabled": False,
+        "email_recipients": "",
+        "email_cc": "",
+        "email_attach_pdf": False,
+    }
+
+    with st.expander("Automation delivery", expanded=False):
+        st.caption("Optional. Configure secrets with environment variables where possible.")
+
+        settings["drive_enabled"] = st.checkbox(
+            "Auto-save PDF to Google Drive",
+            value=bool(_env("GOOGLE_DRIVE_FOLDER_ID")),
+        )
+        if settings["drive_enabled"]:
+            settings["drive_folder_id"] = st.text_input(
+                "Google Drive folder ID",
+                value=_env("GOOGLE_DRIVE_FOLDER_ID"),
+                help="The destination folder must be shared with the service account.",
+            )
+            settings["drive_service_account_file"] = st.text_input(
+                "Service account JSON file path",
+                value=_env("GOOGLE_SERVICE_ACCOUNT_FILE"),
+                help="Optional if GOOGLE_SERVICE_ACCOUNT_JSON is set.",
+            )
+            pasted_json = st.text_area(
+                "Service account JSON",
+                value="",
+                height=90,
+                help="Optional. Prefer environment variables for long-lived credentials.",
+            )
+            settings["drive_service_account_json"] = encode_service_account_json(
+                pasted_json or _env("GOOGLE_SERVICE_ACCOUNT_JSON")
+            )
+
+        settings["slack_enabled"] = st.checkbox(
+            "Send Slack notification when complete",
+            value=bool(_env("SLACK_WEBHOOK_URL")),
+        )
+        if settings["slack_enabled"]:
+            settings["slack_webhook_url"] = st.text_input(
+                "Slack incoming webhook URL",
+                value="" if _env("SLACK_WEBHOOK_URL") else "",
+                type="password",
+                placeholder="Uses SLACK_WEBHOOK_URL if left blank",
+            )
+
+        settings["email_enabled"] = st.checkbox("Email completion link or PDF", value=False)
+        if settings["email_enabled"]:
+            settings["email_recipients"] = st.text_input(
+                "Consultant email recipients",
+                placeholder="consultant@example.com, teammate@example.com",
+            )
+            settings["email_cc"] = st.text_input(
+                "Optional client CC",
+                placeholder="client@example.com",
+            )
+            settings["email_attach_pdf"] = st.checkbox(
+                "Attach PDF if no Drive link is available",
+                value=True,
+                help="Drive links are preferred for large PDFs.",
+            )
+            st.caption("Email uses SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, and SMTP_FROM.")
+
+    return settings
+
+
+def run_delivery_automations(result: dict, settings: dict) -> list[dict]:
+    pdf_path = Path(str(result.get("pdf_path", "")))
+    if not pdf_path.is_file():
+        return [{"service": "Automation", "ok": False, "message": "PDF was not found.", "url": ""}]
+
+    video_filename = str(result.get("filename") or "video")
+    screenshot_count = len(result.get("screenshots") or [])
+    skipped_count = int(result.get("skipped_empty_frames") or 0)
+    delivery_results = []
+    drive_url = ""
+
+    if settings.get("drive_enabled"):
+        drive_result = upload_to_google_drive(
+            pdf_path,
+            folder_id=str(settings.get("drive_folder_id") or ""),
+            service_account_file=str(settings.get("drive_service_account_file") or ""),
+            service_account_json=str(settings.get("drive_service_account_json") or ""),
+        )
+        drive_url = drive_result.url if drive_result.ok else ""
+        delivery_results.append(drive_result.__dict__)
+
+    message = build_completion_message(
+        video_filename=video_filename,
+        pdf_name=pdf_path.name,
+        screenshot_count=screenshot_count,
+        skipped_count=skipped_count,
+        drive_url=drive_url,
+    )
+
+    if settings.get("slack_enabled"):
+        slack_result = post_slack_notification(
+            str(settings.get("slack_webhook_url") or ""),
+            message,
+        )
+        delivery_results.append(slack_result.__dict__)
+
+    if settings.get("email_enabled"):
+        email_result = send_email_delivery(
+            pdf_path,
+            recipients=split_emails(str(settings.get("email_recipients") or "")),
+            cc=split_emails(str(settings.get("email_cc") or "")),
+            subject=f"Walkthrough PDF ready: {pdf_path.name}",
+            body=message,
+            drive_url=drive_url,
+            attach_pdf=bool(settings.get("email_attach_pdf")) and not drive_url,
+        )
+        delivery_results.append(email_result.__dict__)
+
+    return delivery_results
+
+
 def clear_outputs() -> None:
     if OUTPUT_DIR.exists():
         shutil.rmtree(OUTPUT_DIR)
@@ -389,6 +708,7 @@ def probe_upload(uploaded_file) -> float | None:
 
 def run_app() -> None:
     st.markdown(APP_CSS, unsafe_allow_html=True)
+    restore_last_result()
     consultant_prompt = load_consultant_prompt()
     st.markdown(
         """
@@ -453,6 +773,8 @@ def run_app() -> None:
             help="Larger models are more accurate but slower and heavier to run locally.",
         )
 
+    automation_settings = render_automation_settings()
+
     over_size = uploaded is not None and uploaded.size > MAX_UPLOAD_BYTES
     duration = probe_upload(uploaded) if uploaded is not None and not over_size else None
 
@@ -502,9 +824,13 @@ def run_app() -> None:
                     whisper_model_size=whisper_model_size,
                     on_progress=on_progress,
                 )
+                delivery_results = run_delivery_automations(result, automation_settings)
+                if delivery_results:
+                    result["delivery_results"] = delivery_results
                 status.update(label="Outputs ready", state="complete")
 
             st.session_state["last_result"] = result
+            save_last_result(result)
         except Exception as exc:
             st.error(f"Processing failed: {exc}")
         finally:
@@ -521,10 +847,23 @@ def run_app() -> None:
     if result:
         captured_count = len(result.get("screenshots") or [])
         skipped_count = int(result.get("skipped_empty_frames") or 0)
+        if st.session_state.get("restored_last_result"):
+            st.info("Restored your last processed result from disk.")
         st.success(
             f"✓ {captured_count} screenshots captured · "
             f"{skipped_count} skipped (blank or black frames)"
         )
+        for delivery_result in result.get("delivery_results") or []:
+            service = delivery_result.get("service", "Automation")
+            message = delivery_result.get("message", "")
+            url = delivery_result.get("url", "")
+            if delivery_result.get("ok"):
+                st.success(f"{service}: {message}" + (f" {url}" if url else ""))
+            else:
+                st.warning(f"{service}: {message}")
+        if st.button("Start over / clear current result", use_container_width=True):
+            clear_current_result()
+            st.rerun()
 
     if not result:
         st.info("The first frame is always included. Later frames are kept only when the screen changes enough to pass the threshold.")
@@ -542,7 +881,13 @@ def run_app() -> None:
         unsafe_allow_html=True,
     )
     st.markdown(
-        '<p class="instruction-line">Download the PDF, copy the prompt, then open your preferred AI model and attach the PDF + paste the prompt.</p>',
+        """
+        <div class="project-instructions">
+          Create a project in your AI model of choice and paste your analysis prompt into the project instructions.
+          Each session, simply open the project, attach the PDF, and send.
+          The PDF contains both the screenshots and transcript.
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 

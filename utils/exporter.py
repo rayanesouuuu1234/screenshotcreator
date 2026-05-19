@@ -22,6 +22,10 @@ TRANSCRIPT_PADDING_Y = 10
 TRANSCRIPT_FONT_SIZE = 16
 TRANSCRIPT_LINE_GAP = 6
 TRANSCRIPT_BLOCK_GAP = 14
+INSTRUCTIONS_MARGIN = 64
+INSTRUCTIONS_TITLE_SIZE = 30
+INSTRUCTIONS_BODY_SIZE = 18
+INSTRUCTIONS_LINE_GAP = 8
 
 
 def _safe_stem(filename: str) -> str:
@@ -99,12 +103,47 @@ def _line_height(font: ImageFont.ImageFont) -> int:
     return bottom - top
 
 
+def _create_ai_instructions_page(ai_instructions: str) -> Image.Image | None:
+    instructions = ai_instructions.strip()
+    if not instructions:
+        return None
+
+    title_font = _font(INSTRUCTIONS_TITLE_SIZE)
+    body_font = _font(INSTRUCTIONS_BODY_SIZE)
+    max_width = PAGE_WIDTH - (INSTRUCTIONS_MARGIN * 2)
+    body_lines: list[str] = []
+    for paragraph in instructions.splitlines():
+        paragraph = paragraph.strip()
+        if not paragraph:
+            body_lines.append("")
+            continue
+        body_lines.extend(_wrap_text(paragraph, body_font, max_width))
+
+    title_height = _line_height(title_font)
+    body_line_height = _line_height(body_font) + INSTRUCTIONS_LINE_GAP
+    page_height = max(
+        720,
+        INSTRUCTIONS_MARGIN * 2 + title_height + 34 + len(body_lines) * body_line_height,
+    )
+    page = Image.new("RGB", (PAGE_WIDTH, page_height), "white")
+    draw = ImageDraw.Draw(page)
+    y = INSTRUCTIONS_MARGIN
+    draw.text((INSTRUCTIONS_MARGIN, y), "AI Instructions for Functional Design Document", fill="#111111", font=title_font)
+    y += title_height + 34
+    for line in body_lines:
+        if line:
+            draw.text((INSTRUCTIONS_MARGIN, y), line, fill="#444444", font=body_font)
+        y += body_line_height
+    return page
+
+
 def create_screenshots_pdf(
     screenshots: list[dict],
     *,
     video_filename: str,
     output_path: str | Path | None = None,
     transcript_segments: list[dict] | None = None,
+    ai_instructions: str = "",
 ) -> Path:
     """Create a full-width sequential PDF with timestamp-labeled screenshots."""
     if not screenshots:
@@ -190,6 +229,10 @@ def create_screenshots_pdf(
 
     if not pages:
         raise ValueError("None of the generated screenshot files could be read.")
+
+    instructions_page = _create_ai_instructions_page(ai_instructions)
+    if instructions_page is not None:
+        pages.append(instructions_page)
 
     pages[0].save(
         out,

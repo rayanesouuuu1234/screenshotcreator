@@ -15,6 +15,7 @@ from utils.transcriber import transcribe_video
 ProgressCb = Callable[[str, int], None] | None
 MIN_FRAME_BRIGHTNESS = 15.0
 MIN_FRAME_VARIANCE = 100.0
+CONSULTANT_PROMPT_PATH = Path("consultant_ai_prompt.md")
 
 
 def _is_visually_empty_frame(image_path: str | Path) -> bool:
@@ -41,6 +42,12 @@ def _filter_visually_empty_screenshots(screenshots: list[dict]) -> tuple[list[di
     return kept, skipped
 
 
+def _load_ai_instructions() -> str:
+    if CONSULTANT_PROMPT_PATH.is_file():
+        return CONSULTANT_PROMPT_PATH.read_text(encoding="utf-8")
+    return ""
+
+
 def run_screenshot_pipeline(
     video_path: str,
     *,
@@ -48,6 +55,10 @@ def run_screenshot_pipeline(
     change_threshold: float,
     min_gap: float,
     sample_interval: float,
+    crop_left_pct: float = 0.0,
+    crop_right_pct: float = 0.0,
+    crop_top_pct: float = 0.0,
+    crop_bottom_pct: float = 0.0,
     whisper_model_size: str = "base",
     on_progress: ProgressCb = None,
 ) -> dict[str, Any]:
@@ -63,6 +74,10 @@ def run_screenshot_pipeline(
         change_threshold=change_threshold,
         min_gap=min_gap,
         sample_interval=sample_interval,
+        crop_left_pct=crop_left_pct,
+        crop_right_pct=crop_right_pct,
+        crop_top_pct=crop_top_pct,
+        crop_bottom_pct=crop_bottom_pct,
         on_progress=lambda message, pct: progress(message, int(pct * 0.55)),
     )
 
@@ -82,6 +97,7 @@ def run_screenshot_pipeline(
         screenshots,
         video_filename=filename,
         transcript_segments=transcript.get("segments") or [],
+        ai_instructions=_load_ai_instructions(),
     )
 
     result: dict[str, Any] = {
@@ -90,6 +106,10 @@ def run_screenshot_pipeline(
             "change_threshold": float(change_threshold),
             "min_gap": float(min_gap),
             "sample_interval": float(sample_interval),
+            "crop_left_pct": float(crop_left_pct),
+            "crop_right_pct": float(crop_right_pct),
+            "crop_top_pct": float(crop_top_pct),
+            "crop_bottom_pct": float(crop_bottom_pct),
             "whisper_model_size": whisper_model_size,
         },
         "screenshots": screenshots,

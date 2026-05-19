@@ -1,9 +1,13 @@
 {
   "filename": "IPO Walkthrough-2_Mervin_12.17.25 (online-video-cutter.com).mp4",
   "settings": {
-    "change_threshold": 18.0,
-    "min_gap": 12.5,
-    "sample_interval": 3.0,
+    "change_threshold": 10.0,
+    "min_gap": 3.0,
+    "sample_interval": 1.0,
+    "crop_left_pct": 0.0,
+    "crop_right_pct": 0.0,
+    "crop_top_pct": 0.0,
+    "crop_bottom_pct": 0.0,
     "whisper_model_size": "base"
   },
   "screenshots": [
@@ -11,79 +15,163 @@
       "timestamp": 30.0,
       "label": "00:00:30",
       "path": "outputs/screenshots/00_00_30.png",
-      "change_percent": 22.708333333333332
+      "change_percent": 22.59331597222222
     },
     {
       "timestamp": 60.0,
       "label": "00:01:00",
       "path": "outputs/screenshots/00_01_00.png",
-      "change_percent": 22.805989583333332
+      "change_percent": 23.233506944444443
+    },
+    {
+      "timestamp": 66.0,
+      "label": "00:01:06",
+      "path": "outputs/screenshots/00_01_06.png",
+      "change_percent": 24.442274305555557
+    },
+    {
+      "timestamp": 69.0,
+      "label": "00:01:09",
+      "path": "outputs/screenshots/00_01_09.png",
+      "change_percent": 24.45095486111111
     },
     {
       "timestamp": 90.0,
       "label": "00:01:30",
       "path": "outputs/screenshots/00_01_30.png",
-      "change_percent": 30.366753472222225
+      "change_percent": 30.334201388888886
+    },
+    {
+      "timestamp": 97.0,
+      "label": "00:01:37",
+      "path": "outputs/screenshots/00_01_37.png",
+      "change_percent": 21.959635416666668
+    },
+    {
+      "timestamp": 108.0,
+      "label": "00:01:48",
+      "path": "outputs/screenshots/00_01_48.png",
+      "change_percent": 15.56423611111111
+    },
+    {
+      "timestamp": 123.0,
+      "label": "00:02:03",
+      "path": "outputs/screenshots/00_02_03.png",
+      "change_percent": 22.293836805555557
     },
     {
       "timestamp": 126.0,
       "label": "00:02:06",
       "path": "outputs/screenshots/00_02_06.png",
+      "change_percent": 64.01041666666667
+    },
+    {
+      "timestamp": 193.0,
+      "label": "00:03:13",
+      "path": "outputs/screenshots/00_03_13.png",
+      "change_percent": 63.888888888888886
+    },
+    {
+      "timestamp": 199.0,
+      "label": "00:03:19",
+      "path": "outputs/screenshots/00_03_19.png",
+      "change_percent": 68.68923611111111
+    },
+    {
+      "timestamp": 238.0,
+      "label": "00:03:58",
+      "path": "outputs/screenshots/00_03_58.png",
+      "change_percent": 68.34201388888889
+    },
+    {
+      "timestamp": 241.0,
+      "label": "00:04:01",
+      "path": "outputs/screenshots/00_04_01.png",
+      "change_percent": 22.703993055555554
+    },
+    {
+      "timestamp": 245.0,
+      "label": "00:04:05",
+      "path": "outputs/screenshots/00_04_05.png",
+      "change_percent": 63.74131944444444
+    },
+    {
+      "timestamp": 290.0,
+      "label": "00:04:50",
+      "path": "outputs/screenshots/00_04_50.png",
       "change_percent": 76.40625
     },
     {
-      "timestamp": 195.0,
-      "label": "00:03:15",
-      "path": "outputs/screenshots/00_03_15.png",
-      "change_percent": 68.81944444444444
+      "timestamp": 293.0,
+      "label": "00:04:53",
+      "path": "outputs/screenshots/00_04_53.png",
+      "change_percent": 63.728298611111114
     },
     {
-      "timestamp": 240.0,
-      "label": "00:04:00",
-      "path": "outputs/screenshots/00_04_00.png",
-      "change_percent": 68.38975694444444
+      "timestamp": 297.0,
+      "label": "00:04:57",
+      "path": "outputs/screenshots/00_04_57.png",
+      "change_percent": 21.40842013888889
     },
     {
-      "timestamp": 294.0,
-      "label": "00:04:54",
-      "path": "outputs/screenshots/00_04_54.png",
-      "change_percent": 62.97960069444445
+      "timestamp": 308.0,
+      "label": "00:05:08",
+      "path": "outputs/screenshots/00_05_08.png",
+      "change_percent": 21.73611111111111
     },
     {
-      "timestamp": 309.0,
-      "label": "00:05:09",
-      "path": "outputs/screenshots/00_05_09.png",
-      "change_percent": 22.04861111111111
+      "timestamp": 321.0,
+      "label": "00:05:21",
+      "path": "outputs/screenshots/00_05_21.png",
+      "change_percent": 22.52170138888889
     },
     {
       "timestamp": 333.0,
       "label": "00:05:33",
       "path": "outputs/screenshots/00_05_33.png",
-      "change_percent": 22.04861111111111
+      "change_percent": 22.037760416666664
     },
     {
-      "timestamp": 348.0,
-      "label": "00:05:48",
-      "path": "outputs/screenshots/00_05_48.png",
-      "change_percent": 21.34765625
+      "timestamp": 346.0,
+      "label": "00:05:46",
+      "path": "outputs/screenshots/00_05_46.png",
+      "change_percent": 27.395833333333336
     },
     {
-      "timestamp": 414.0,
-      "label": "00:06:54",
-      "path": "outputs/screenshots/00_06_54.png",
-      "change_percent": 22.623697916666664
+      "timestamp": 412.0,
+      "label": "00:06:52",
+      "path": "outputs/screenshots/00_06_52.png",
+      "change_percent": 21.829427083333332
     },
     {
-      "timestamp": 429.0,
-      "label": "00:07:09",
-      "path": "outputs/screenshots/00_07_09.png",
-      "change_percent": 30.52517361111111
+      "timestamp": 416.0,
+      "label": "00:06:56",
+      "path": "outputs/screenshots/00_06_56.png",
+      "change_percent": 21.796875
     },
     {
-      "timestamp": 531.0,
-      "label": "00:08:51",
-      "path": "outputs/screenshots/00_08_51.png",
-      "change_percent": 21.99001736111111
+      "timestamp": 423.0,
+      "label": "00:07:03",
+      "path": "outputs/screenshots/00_07_03.png",
+      "change_percent": 32.200520833333336
+    },
+    {
+      "timestamp": 426.0,
+      "label": "00:07:06",
+      "path": "outputs/screenshots/00_07_06.png",
+      "change_percent": 41.740451388888886
+    },
+    {
+      "timestamp": 431.0,
+      "label": "00:07:11",
+      "path": "outputs/screenshots/00_07_11.png",
+      "change_percent": 37.10503472222222
+    },
+    {
+      "timestamp": 530.0,
+      "label": "00:08:50",
+      "path": "outputs/screenshots/00_08_50.png",
+      "change_percent": 22.434895833333332
     }
   ],
   "skipped_empty_frames": 1,

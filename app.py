@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import importlib
 import json
 import os
 import shutil
@@ -21,7 +22,12 @@ from utils.automation import (
     split_emails,
     upload_to_google_drive,
 )
-from utils.pipeline import run_screenshot_pipeline
+import utils.pipeline as pipeline_module
+import utils.scene_detector as scene_detector_module
+
+scene_detector_module = importlib.reload(scene_detector_module)
+pipeline_module = importlib.reload(pipeline_module)
+run_screenshot_pipeline = pipeline_module.run_screenshot_pipeline
 
 APP_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = APP_DIR / "outputs"
@@ -745,6 +751,36 @@ def run_app() -> None:
     st.caption(f"Current sensitivity threshold: {change_threshold:.1f}% changed area")
 
     with st.expander("⚙️ Advanced Settings", expanded=False):
+        st.markdown("#### Crop recording")
+        st.caption("Use this to remove Zoom/Teams/Meet participant panels or browser chrome before screenshots are saved.")
+        crop_preset = st.selectbox(
+            "Crop preset",
+            options=[
+                "No crop",
+                "Remove right side panel",
+                "Remove left side panel",
+                "Custom crop",
+            ],
+            index=0,
+        )
+        preset_crop = {
+            "No crop": (0.0, 0.0, 0.0, 0.0),
+            "Remove right side panel": (0.0, 25.0, 0.0, 0.0),
+            "Remove left side panel": (25.0, 0.0, 0.0, 0.0),
+            "Custom crop": (0.0, 0.0, 0.0, 0.0),
+        }
+        crop_left_pct, crop_right_pct, crop_top_pct, crop_bottom_pct = preset_crop[crop_preset]
+        if crop_preset == "Custom crop":
+            crop_cols = st.columns(4)
+            with crop_cols[0]:
+                crop_left_pct = st.slider("Crop left (%)", 0.0, 50.0, 0.0, 1.0)
+            with crop_cols[1]:
+                crop_right_pct = st.slider("Crop right (%)", 0.0, 50.0, 0.0, 1.0)
+            with crop_cols[2]:
+                crop_top_pct = st.slider("Crop top (%)", 0.0, 30.0, 0.0, 1.0)
+            with crop_cols[3]:
+                crop_bottom_pct = st.slider("Crop bottom (%)", 0.0, 30.0, 0.0, 1.0)
+
         st.markdown("#### Detection settings")
         col_a, col_b = st.columns(2)
         with col_a:
@@ -821,6 +857,10 @@ def run_app() -> None:
                     change_threshold=change_threshold,
                     min_gap=min_gap,
                     sample_interval=sample_interval,
+                    crop_left_pct=crop_left_pct,
+                    crop_right_pct=crop_right_pct,
+                    crop_top_pct=crop_top_pct,
+                    crop_bottom_pct=crop_bottom_pct,
                     whisper_model_size=whisper_model_size,
                     on_progress=on_progress,
                 )
@@ -884,15 +924,15 @@ def run_app() -> None:
         """
         <div class="project-instructions">
           Create a project in your AI model of choice and paste your analysis prompt into the project instructions.
-          Each session, simply open the project, attach the PDF, and send.
-          The PDF contains both the screenshots and transcript.
+          Each session, simply open the project, attach the generated PDF and the reference Functional Design Document template if available, and send.
+          The PDF contains the screenshots, transcript, and AI instructions needed to produce a Word-style consultant deliverable.
         </div>
         """,
         unsafe_allow_html=True,
     )
 
     st.markdown("#### Screenshot PDF")
-    st.caption("Transcript context is embedded in this PDF. Attach it to your AI model.")
+    st.caption("Transcript context and AI instructions are embedded in this PDF. Attach it to your AI model.")
     if pdf_path.is_file():
         st.download_button(
             "Download Screenshot PDF",

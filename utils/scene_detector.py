@@ -9,6 +9,8 @@ from typing import Callable
 import cv2
 import numpy as np
 
+from utils.crop import apply_crop_margins_bgr
+
 SCREENSHOT_DIR = Path("outputs/screenshots")
 
 ProgressCb = Callable[[str, int], None] | None
@@ -43,24 +45,6 @@ def _prepare_frame(frame: np.ndarray, width: int = 320) -> np.ndarray:
         frame = cv2.resize(frame, (width, max(1, int(h * ratio))), interpolation=cv2.INTER_AREA)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     return cv2.GaussianBlur(gray, (5, 5), 0)
-
-
-def _crop_frame(
-    frame: np.ndarray,
-    *,
-    crop_left_pct: float = 0.0,
-    crop_right_pct: float = 0.0,
-    crop_top_pct: float = 0.0,
-    crop_bottom_pct: float = 0.0,
-) -> np.ndarray:
-    h, w = frame.shape[:2]
-    left = int(w * max(0.0, min(float(crop_left_pct), 80.0)) / 100.0)
-    right = w - int(w * max(0.0, min(float(crop_right_pct), 80.0)) / 100.0)
-    top = int(h * max(0.0, min(float(crop_top_pct), 80.0)) / 100.0)
-    bottom = h - int(h * max(0.0, min(float(crop_bottom_pct), 80.0)) / 100.0)
-    if right - left < 10 or bottom - top < 10:
-        return frame
-    return frame[top:bottom, left:right]
 
 
 def _changed_area_percent(current: np.ndarray, previous: np.ndarray) -> float:
@@ -128,7 +112,7 @@ def detect_scenes(
         if not ok or frame is None:
             break
 
-        frame = _crop_frame(
+        frame = apply_crop_margins_bgr(
             frame,
             crop_left_pct=crop_left_pct,
             crop_right_pct=crop_right_pct,

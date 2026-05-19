@@ -1,4 +1,4 @@
-"""PDF export for chronological screenshots."""
+"""Word document export for chronological screenshots."""
 
 from __future__ import annotations
 
@@ -6,26 +6,14 @@ import re
 from datetime import date
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from docx import Document
+from docx.enum.text import WD_LINE_SPACING
+from docx.shared import Inches, Pt, RGBColor
 
-PDF_DIR = Path("outputs")
-PDF_PATH = PDF_DIR / "screenshots.pdf"
-PAGE_WIDTH = 1280
-TOP_PADDING = 24
-LABEL_HEIGHT = 30
-LABEL_GAP = 12
-BOTTOM_PADDING = 16
-DIVIDER_WIDTH = 1
-TEXT_MARGIN_X = 24
-TRANSCRIPT_RULE_GAP = 12
-TRANSCRIPT_PADDING_Y = 10
-TRANSCRIPT_FONT_SIZE = 16
-TRANSCRIPT_LINE_GAP = 6
-TRANSCRIPT_BLOCK_GAP = 14
-INSTRUCTIONS_MARGIN = 64
-INSTRUCTIONS_TITLE_SIZE = 30
-INSTRUCTIONS_BODY_SIZE = 18
-INSTRUCTIONS_LINE_GAP = 8
+OUTPUT_DIR = Path("outputs")
+PAGE_IMAGE_WIDTH = Inches(6.5)
+TRANSCRIPT_FONT_SIZE = Pt(10)
+LABEL_FONT_SIZE = Pt(14)
 
 
 def _safe_stem(filename: str) -> str:
@@ -34,26 +22,8 @@ def _safe_stem(filename: str) -> str:
     return stem or "video"
 
 
-def _default_pdf_name(video_filename: str) -> str:
-    return f"{_safe_stem(video_filename)}_{date.today().isoformat()}.pdf"
-
-
-def _font(size: int, *, italic: bool = False) -> ImageFont.ImageFont:
-    candidates = (
-        (
-            "/System/Library/Fonts/Supplemental/Arial Italic.ttf",
-            "/Library/Fonts/Arial Italic.ttf",
-        )
-        if italic
-        else (
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-            "/Library/Fonts/Arial.ttf",
-        )
-    )
-    for candidate in candidates:
-        if Path(candidate).is_file():
-            return ImageFont.truetype(candidate, size=size)
-    return ImageFont.load_default()
+def default_docx_name(video_filename: str) -> str:
+    return f"{_safe_stem(video_filename)}_{date.today().isoformat()}.docx"
 
 
 def _segment_text(segment: dict) -> str:
@@ -75,69 +45,46 @@ def _segments_for_window(segments: list[dict], start: float, end: float | None) 
     return lines
 
 
-def _wrap_text(text: str, font: ImageFont.ImageFont, max_width: int) -> list[str]:
-    words = text.split()
-    if not words:
-        return []
-
-    lines: list[str] = []
-    current = words[0]
-    for word in words[1:]:
-        candidate = f"{current} {word}"
-        if _text_width(candidate, font) <= max_width:
-            current = candidate
-        else:
-            lines.append(current)
-            current = word
-    lines.append(current)
-    return lines
+def _add_horizontal_rule(doc: Document) -> None:
+    paragraph = doc.add_paragraph()
+    run = paragraph.add_run("─" * 72)
+    run.font.color.rgb = RGBColor(221, 221, 221)
 
 
-def _text_width(text: str, font: ImageFont.ImageFont) -> int:
-    left, _, right, _ = font.getbbox(text)
-    return right - left
+def _add_transcript_block(doc: Document, lines: list[str]) -> None:
+    if not lines:
+        return
+    _add_horizontal_rule(doc)
+    paragraph = doc.add_paragraph()
+    paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
+    paragraph.paragraph_format.space_after = Pt(10)
+    run = paragraph.add_run("\n".join(lines))
+    run.italic = True
+    run.font.size = TRANSCRIPT_FONT_SIZE
+    run.font.color.rgb = RGBColor(102, 102, 102)
+    _add_horizontal_rule(doc)
 
 
-def _line_height(font: ImageFont.ImageFont) -> int:
-    _, top, _, bottom = font.getbbox("Ag")
-    return bottom - top
-
-
-def _create_ai_instructions_page(ai_instructions: str) -> Image.Image | None:
+def _add_ai_instructions(doc: Document, ai_instructions: str) -> None:
     instructions = ai_instructions.strip()
     if not instructions:
-        return None
-
-    title_font = _font(INSTRUCTIONS_TITLE_SIZE)
-    body_font = _font(INSTRUCTIONS_BODY_SIZE)
-    max_width = PAGE_WIDTH - (INSTRUCTIONS_MARGIN * 2)
-    body_lines: list[str] = []
-    for paragraph in instructions.splitlines():
-        paragraph = paragraph.strip()
-        if not paragraph:
-            body_lines.append("")
+        return
+    doc.add_page_break()
+    heading = doc.add_heading("AI Instructions for Functional Design Document", level=1)
+    heading.runs[0].font.size = Pt(20)
+    for paragraph_text in instructions.splitlines():
+        text = paragraph_text.strip()
+        if not text:
+            doc.add_paragraph()
             continue
-        body_lines.extend(_wrap_text(paragraph, body_font, max_width))
-
-    title_height = _line_height(title_font)
-    body_line_height = _line_height(body_font) + INSTRUCTIONS_LINE_GAP
-    page_height = max(
-        720,
-        INSTRUCTIONS_MARGIN * 2 + title_height + 34 + len(body_lines) * body_line_height,
-    )
-    page = Image.new("RGB", (PAGE_WIDTH, page_height), "white")
-    draw = ImageDraw.Draw(page)
-    y = INSTRUCTIONS_MARGIN
-    draw.text((INSTRUCTIONS_MARGIN, y), "AI Instructions for Functional Design Document", fill="#111111", font=title_font)
-    y += title_height + 34
-    for line in body_lines:
-        if line:
-            draw.text((INSTRUCTIONS_MARGIN, y), line, fill="#444444", font=body_font)
-        y += body_line_height
-    return page
+        paragraph = doc.add_paragraph(text)
+        paragraph.paragraph_format.space_after = Pt(6)
+        if paragraph.runs:
+            paragraph.runs[0].font.size = Pt(11)
+            paragraph.runs[0].font.color.rgb = RGBColor(68, 68, 68)
 
 
-def create_screenshots_pdf(
+def create_screenshots_docx(
     screenshots: list[dict],
     *,
     video_filename: str,
@@ -145,100 +92,52 @@ def create_screenshots_pdf(
     transcript_segments: list[dict] | None = None,
     ai_instructions: str = "",
 ) -> Path:
-    """Create a full-width sequential PDF with timestamp-labeled screenshots."""
+    """Create a Word document with timestamped screenshots and paired transcript text."""
     if not screenshots:
-        raise ValueError("No screenshots were generated, so a PDF cannot be created.")
+        raise ValueError("No screenshots were generated, so a document cannot be created.")
 
-    PDF_DIR.mkdir(parents=True, exist_ok=True)
-    out = Path(output_path) if output_path else PDF_DIR / _default_pdf_name(video_filename)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    out = Path(output_path) if output_path else OUTPUT_DIR / default_docx_name(video_filename)
 
-    pages: list[Image.Image] = []
-    label_font = _font(22)
-    transcript_font = _font(TRANSCRIPT_FONT_SIZE, italic=True)
+    doc = Document()
     transcript_segments = transcript_segments or []
-    transcript_max_width = PAGE_WIDTH - (TEXT_MARGIN_X * 2)
+    rendered = 0
 
     for index, shot in enumerate(screenshots, start=1):
         image_path = Path(str(shot.get("path", "")))
         if not image_path.is_file():
             continue
 
-        with Image.open(image_path) as screenshot:
-            screenshot = screenshot.convert("RGB")
-            width, height = screenshot.size
-            if width <= 0 or height <= 0:
-                continue
+        label = str(shot.get("label", "00:00:00"))
+        heading = doc.add_heading(f"{index}. {label}", level=2)
+        if heading.runs:
+            heading.runs[0].font.size = LABEL_FONT_SIZE
 
-            scale = PAGE_WIDTH / width
-            image_height = max(1, int(height * scale))
-            resized = screenshot.resize((PAGE_WIDTH, image_height), Image.Resampling.LANCZOS)
+        doc.add_picture(str(image_path), width=PAGE_IMAGE_WIDTH)
 
-        image_y = TOP_PADDING + LABEL_HEIGHT + LABEL_GAP
         screenshot_start = float(shot.get("timestamp", 0.0) or 0.0)
         next_timestamp = None
         if index < len(screenshots):
-            next_timestamp = float(screenshots[index].get("timestamp", screenshot_start) or screenshot_start)
-
-        transcript_lines: list[str] = []
-        for segment_text in _segments_for_window(transcript_segments, screenshot_start, next_timestamp):
-            transcript_lines.extend(_wrap_text(segment_text, transcript_font, transcript_max_width))
-
-        line_height = _line_height(transcript_font) + TRANSCRIPT_LINE_GAP
-        transcript_height = 0
-        if transcript_lines:
-            transcript_height = (
-                TRANSCRIPT_BLOCK_GAP
-                + TRANSCRIPT_RULE_GAP
-                + TRANSCRIPT_PADDING_Y
-                + len(transcript_lines) * line_height
-                + TRANSCRIPT_PADDING_Y
-                + TRANSCRIPT_RULE_GAP
+            next_timestamp = float(
+                screenshots[index].get("timestamp", screenshot_start) or screenshot_start
             )
 
-        page_height = image_y + image_height + transcript_height + BOTTOM_PADDING
-        page = Image.new("RGB", (PAGE_WIDTH, page_height), "white")
-        draw = ImageDraw.Draw(page)
-        label = str(shot.get("label", "00:00:00"))
-        draw.text((24, TOP_PADDING), f"{index}. {label}", fill="#111111", font=label_font)
-        page.paste(resized, (0, image_y))
-
-        if transcript_lines:
-            block_top = image_y + image_height + TRANSCRIPT_BLOCK_GAP
-            draw.line(
-                [(TEXT_MARGIN_X, block_top), (PAGE_WIDTH - TEXT_MARGIN_X, block_top)],
-                fill="#DDDDDD",
-                width=DIVIDER_WIDTH,
-            )
-            text_y = block_top + TRANSCRIPT_RULE_GAP + TRANSCRIPT_PADDING_Y
-            for line in transcript_lines:
-                draw.text((TEXT_MARGIN_X, text_y), line, fill="#666666", font=transcript_font)
-                text_y += line_height
-            bottom_rule_y = text_y + TRANSCRIPT_PADDING_Y
-            draw.line(
-                [(TEXT_MARGIN_X, bottom_rule_y), (PAGE_WIDTH - TEXT_MARGIN_X, bottom_rule_y)],
-                fill="#DDDDDD",
-                width=DIVIDER_WIDTH,
-            )
-
-        draw.line(
-            [(0, page_height - BOTTOM_PADDING // 2), (PAGE_WIDTH, page_height - BOTTOM_PADDING // 2)],
-            fill="#DDDDDD",
-            width=DIVIDER_WIDTH,
+        transcript_lines = _segments_for_window(
+            transcript_segments,
+            screenshot_start,
+            next_timestamp,
         )
-        pages.append(page)
+        _add_transcript_block(doc, transcript_lines)
+        rendered += 1
 
-    if not pages:
+    if rendered == 0:
         raise ValueError("None of the generated screenshot files could be read.")
 
-    instructions_page = _create_ai_instructions_page(ai_instructions)
-    if instructions_page is not None:
-        pages.append(instructions_page)
-
-    pages[0].save(
-        out,
-        format="PDF",
-        resolution=150.0,
-        save_all=True,
-        append_images=pages[1:],
-    )
+    _add_ai_instructions(doc, ai_instructions)
+    doc.save(out)
     return out
+
+
+# Backward-compatible alias while older code paths may still import the PDF helper name.
+create_screenshots_pdf = create_screenshots_docx
+_default_pdf_name = default_docx_name

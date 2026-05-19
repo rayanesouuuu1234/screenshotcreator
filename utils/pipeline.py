@@ -6,25 +6,17 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from PIL import Image, ImageStat
-
-from utils.exporter import create_screenshots_pdf
+from utils.exporter import create_screenshots_docx
+from utils.frame_quality import is_visually_empty_image
 from utils.scene_detector import detect_scenes
 from utils.transcriber import transcribe_video
 
 ProgressCb = Callable[[str, int], None] | None
-MIN_FRAME_BRIGHTNESS = 15.0
-MIN_FRAME_VARIANCE = 100.0
 CONSULTANT_PROMPT_PATH = Path("consultant_ai_prompt.md")
 
-
-def _is_visually_empty_frame(image_path: str | Path) -> bool:
-    with Image.open(image_path) as image:
-        grayscale = image.convert("L")
-        stats = ImageStat.Stat(grayscale)
-    mean_brightness = float(stats.mean[0])
-    pixel_variance = float(stats.var[0])
-    return mean_brightness < MIN_FRAME_BRIGHTNESS or pixel_variance < MIN_FRAME_VARIANCE
+DEFAULT_MIN_GAP = 3.0
+DEFAULT_SAMPLE_INTERVAL = 1.0
+DEFAULT_WHISPER_MODEL = "base"
 
 
 def _filter_visually_empty_screenshots(screenshots: list[dict]) -> tuple[list[dict], int]:
@@ -35,7 +27,7 @@ def _filter_visually_empty_screenshots(screenshots: list[dict]) -> tuple[list[di
         if not image_path.is_file():
             kept.append(screenshot)
             continue
-        if _is_visually_empty_frame(image_path):
+        if is_visually_empty_image(image_path):
             skipped += 1
             continue
         kept.append(screenshot)
@@ -53,13 +45,10 @@ def run_screenshot_pipeline(
     *,
     filename: str,
     change_threshold: float,
-    min_gap: float,
-    sample_interval: float,
     crop_left_pct: float = 0.0,
     crop_right_pct: float = 0.0,
     crop_top_pct: float = 0.0,
     crop_bottom_pct: float = 0.0,
-    whisper_model_size: str = "base",
     on_progress: ProgressCb = None,
 ) -> dict[str, Any]:
     """Detect meaningful video changes, transcribe audio, and generate outputs."""
@@ -72,8 +61,8 @@ def run_screenshot_pipeline(
     screenshots = detect_scenes(
         video_path,
         change_threshold=change_threshold,
-        min_gap=min_gap,
-        sample_interval=sample_interval,
+        min_gap=DEFAULT_MIN_GAP,
+        sample_interval=DEFAULT_SAMPLE_INTERVAL,
         crop_left_pct=crop_left_pct,
         crop_right_pct=crop_right_pct,
         crop_top_pct=crop_top_pct,
@@ -82,18 +71,18 @@ def run_screenshot_pipeline(
     )
 
     screenshots, skipped_empty_frames = _filter_visually_empty_screenshots(screenshots)
-    print(f"Skipped {skipped_empty_frames} visually empty frame(s) before PDF assembly.")
+    print(f"Skipped {skipped_empty_frames} visually empty frame(s) before document assembly.")
 
     progress("Transcribing with faster-whisper", 58)
     transcript = transcribe_video(
         video_path,
-        model_size=whisper_model_size,
+        model_size=DEFAULT_WHISPER_MODEL,
         output_path=None,
         on_progress=lambda message, pct: progress(message, 58 + int(pct * 0.34)),
     )
 
-    progress("Generating PDF", 94)
-    pdf_path = create_screenshots_pdf(
+    progress("Generating Word document", 94)
+    docx_path = create_screenshots_docx(
         screenshots,
         video_filename=filename,
         transcript_segments=transcript.get("segments") or [],
@@ -104,17 +93,17 @@ def run_screenshot_pipeline(
         "filename": filename,
         "settings": {
             "change_threshold": float(change_threshold),
-            "min_gap": float(min_gap),
-            "sample_interval": float(sample_interval),
+            "min_gap": DEFAULT_MIN_GAP,
+            "sample_interval": DEFAULT_SAMPLE_INTERVAL,
             "crop_left_pct": float(crop_left_pct),
             "crop_right_pct": float(crop_right_pct),
             "crop_top_pct": float(crop_top_pct),
             "crop_bottom_pct": float(crop_bottom_pct),
-            "whisper_model_size": whisper_model_size,
+            "whisper_model_size": DEFAULT_WHISPER_MODEL,
         },
         "screenshots": screenshots,
         "skipped_empty_frames": skipped_empty_frames,
-        "pdf_path": str(pdf_path),
+        "docx_path": str(docx_path),
         "transcript": transcript,
     }
 

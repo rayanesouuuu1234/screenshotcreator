@@ -1,6 +1,6 @@
-# Video Screenshot PDF Generator
+# Video Screenshot Document Generator
 
-Streamlit app that turns a screen recording into a timestamped screenshot PDF with embedded transcript context.
+Streamlit app that turns a screen recording into a timestamped screenshot Word document with embedded transcript context.
 
 ## What It Does
 
@@ -9,7 +9,7 @@ Streamlit app that turns a screen recording into a timestamped screenshot PDF wi
 3. Detects significant visual changes while ignoring minor compression noise.
 4. Saves the selected frames as screenshots.
 5. Transcribes audio locally with faster-whisper.
-6. Generates a downloadable PDF with screenshots and matching transcript context in chronological order.
+6. Generates a downloadable Word document (.docx) with screenshots and matching transcript context in chronological order.
 
 ## Setup
 
@@ -27,7 +27,7 @@ streamlit run app.py
 
 ## Optional Automation Delivery
 
-The app can deliver the finished PDF after processing if you enable options in the **Automation delivery** expander.
+Upload a video, optionally crop the first frame, adjust sensitivity, and download the finished document.
 
 - **Google Drive:** set `GOOGLE_DRIVE_FOLDER_ID` plus either `GOOGLE_SERVICE_ACCOUNT_FILE` or `GOOGLE_SERVICE_ACCOUNT_JSON`.
 - **Slack:** set `SLACK_WEBHOOK_URL` or paste an incoming webhook URL in the app.
@@ -42,5 +42,5 @@ Google Drive uploads require the destination folder to be shared with the servic
 - **Sample every N seconds** controls how often the video is checked. Lower values catch faster UI changes but take longer to process.
 - **faster-whisper model** controls transcription accuracy and speed. `base` is a good default.
 
-Outputs are written to `outputs/`, including individual screenshots, `screenshots.json`, and the generated PDF. Screenshot extraction is uncapped; the number of captures depends only on the detection settings and the video content.
+Outputs are written to `outputs/`, including individual screenshots, `screenshots.json`, and the generated `.docx` file. Screenshot extraction is uncapped; the number of captures depends on sensitivity and the video content.
 # screenshotcreator

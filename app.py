@@ -1,4 +1,4 @@
-"""Streamlit UI for extracting meaningful video screen changes into a PDF."""
+"""Streamlit UI for extracting meaningful video screen changes into a Word document."""
 
 from __future__ import annotations
 
@@ -14,14 +14,8 @@ import cv2
 import streamlit as st
 import streamlit.components.v1 as components
 
-from utils.automation import (
-    build_completion_message,
-    encode_service_account_json,
-    post_slack_notification,
-    send_email_delivery,
-    split_emails,
-    upload_to_google_drive,
-)
+from utils.crop_ui import get_crop_margins, render_video_crop_ui, reset_crop_margins
+
 import utils.pipeline as pipeline_module
 import utils.scene_detector as scene_detector_module
 
@@ -31,14 +25,14 @@ run_screenshot_pipeline = pipeline_module.run_screenshot_pipeline
 
 APP_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = APP_DIR / "outputs"
+UPLOAD_CACHE_DIR = APP_DIR / ".upload_cache"
 LAST_RESULT_PATH = OUTPUT_DIR / "last_result.json"
 PROMPT_PATH = APP_DIR / "consultant_ai_prompt.md"
 MAX_UPLOAD_BYTES = 2000 * 1024 * 1024
-
 os.chdir(APP_DIR)
 
 st.set_page_config(
-    page_title="Video Screenshot PDF",
+    page_title="Video Screenshot Document",
     page_icon="logo.jpeg",
     layout="wide",
 )
@@ -63,22 +57,12 @@ APP_CSS = """
     --shadow: 0 22px 70px rgba(0, 0, 0, 0.42);
   }
   @keyframes fadeUp {
-    from {
-      opacity: 0;
-      transform: translateY(10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
   }
   @keyframes glowPulse {
-    0%, 100% {
-      box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.18);
-    }
-    50% {
-      box-shadow: 0 0 0 7px rgba(96, 165, 250, 0.02);
-    }
+    0%, 100% { box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.18); }
+    50% { box-shadow: 0 0 0 7px rgba(96, 165, 250, 0.02); }
   }
   html, body, [class*="css"] {
     font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -107,13 +91,6 @@ APP_CSS = """
     padding: 2rem 2.25rem;
     box-shadow: var(--shadow);
     margin-bottom: 1.25rem;
-  }
-  .hero-card:before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(90deg, rgba(255,255,255,0.08), transparent 35%);
-    pointer-events: none;
   }
   .hero-card h1 {
     margin: 0 0 0.5rem;
@@ -166,10 +143,6 @@ APP_CSS = """
     color: var(--text);
     transition: border-color 160ms ease, transform 160ms ease;
   }
-  .stButton > button:not([kind="primary"]):hover {
-    border-color: var(--border-strong);
-    transform: translateY(-1px);
-  }
   .shot-card {
     background: linear-gradient(135deg, rgba(15, 23, 42, 0.82), rgba(17, 24, 39, 0.76));
     border: 1px solid var(--border);
@@ -180,11 +153,6 @@ APP_CSS = """
   .muted {
     color: var(--muted);
     font-size: 0.95rem;
-  }
-  .section-rule {
-    border: 0;
-    border-top: 1px solid rgba(63,63,70,0.65);
-    margin: 1.4rem 0;
   }
   .stepper {
     display: grid;
@@ -234,11 +202,6 @@ APP_CSS = """
     color: var(--text);
     font-weight: 800;
   }
-  .instruction-line {
-    color: var(--muted);
-    font-size: 0.95rem;
-    margin: 0.25rem 0 1rem;
-  }
   .project-instructions {
     color: #dbeafe;
     font-size: 1.06rem;
@@ -249,39 +212,14 @@ APP_CSS = """
     padding: 1rem 1.1rem;
     margin: 0.35rem 0 1.15rem;
   }
-  [data-testid="stVerticalBlockBorderWrapper"] {
-    border-color: var(--border) !important;
-    border-radius: 20px !important;
-    background: rgba(15, 23, 42, 0.42);
-    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18);
-  }
   [data-testid="stExpander"] {
     border: 1px solid var(--border);
     border-radius: 18px;
     background: rgba(15, 23, 42, 0.58);
     overflow: hidden;
   }
-  [data-testid="stExpander"] details summary {
-    font-weight: 750;
-  }
-  div[data-testid="stAlert"] {
-    border-radius: 16px;
-    border: 1px solid var(--border);
-    background: rgba(15, 23, 42, 0.72);
-  }
-  div[data-testid="stStatusWidget"] {
-    border-radius: 18px;
-  }
   div[data-testid="stSlider"] {
     padding-top: 0.25rem;
-  }
-  .stTextInput input,
-  .stTextArea textarea,
-  .stSelectbox div[data-baseweb="select"] > div {
-    border-radius: 14px !important;
-    border-color: var(--border) !important;
-    background-color: rgba(15, 23, 42, 0.86) !important;
-    color: var(--text) !important;
   }
   hr {
     border-color: rgba(148, 163, 184, 0.16);
@@ -291,13 +229,8 @@ APP_CSS = """
     color: var(--text);
     letter-spacing: -0.035em;
   }
-  p, label, span {
-    color: inherit;
-  }
   @media (max-width: 800px) {
-    .stepper {
-      grid-template-columns: 1fr;
-    }
+    .stepper { grid-template-columns: 1fr; }
   }
 </style>
 """
@@ -331,21 +264,25 @@ def format_ts(seconds: float) -> str:
 def load_consultant_prompt() -> str:
     if PROMPT_PATH.is_file():
         return PROMPT_PATH.read_text(encoding="utf-8")
-    return "Attach the screenshot PDF and transcript, then summarize the walkthrough."
-
-
-def _env(name: str) -> str:
-    return os.getenv(name, "").strip()
+    return "Attach the screenshot Word document and transcript, then summarize the walkthrough."
 
 
 def _path_exists(path_value: str) -> bool:
     return bool(path_value) and Path(path_value).is_file()
 
 
+def get_result_doc_path(result: dict) -> Path | None:
+    for key in ("docx_path", "pdf_path"):
+        path = Path(str(result.get(key) or ""))
+        if path.is_file():
+            return path
+    return None
+
+
 def is_restorable_result(result: dict) -> bool:
     if not isinstance(result, dict):
         return False
-    if not _path_exists(str(result.get("pdf_path") or "")):
+    if get_result_doc_path(result) is None:
         return False
     screenshots = result.get("screenshots") or []
     return any(_path_exists(str(shot.get("path") or "")) for shot in screenshots)
@@ -378,7 +315,37 @@ def save_last_result(result: dict) -> None:
 def clear_current_result() -> None:
     st.session_state.pop("last_result", None)
     st.session_state.pop("restored_last_result", None)
+    st.session_state.pop("upload_cache_key", None)
+    st.session_state.pop("crop_pct", None)
+    st.session_state.pop("crop_preview_key", None)
+    st.session_state.pop("crop_preview_bgr", None)
+    for side in ("left", "right", "top", "bottom"):
+        st.session_state.pop(f"crop_margin_{side}", None)
     clear_outputs()
+    if UPLOAD_CACHE_DIR.exists():
+        shutil.rmtree(UPLOAD_CACHE_DIR)
+
+
+def clear_outputs() -> None:
+    if OUTPUT_DIR.exists():
+        shutil.rmtree(OUTPUT_DIR)
+    (OUTPUT_DIR / "screenshots").mkdir(parents=True, exist_ok=True)
+
+
+def ensure_upload_cached(uploaded_file) -> Path | None:
+    if uploaded_file is None:
+        return None
+    UPLOAD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    suffix = Path(uploaded_file.name).suffix or ".mp4"
+    cache_path = UPLOAD_CACHE_DIR / f"current_upload{suffix}"
+    cache_key = f"{uploaded_file.name}:{uploaded_file.size}"
+    cache_changed = st.session_state.get("upload_cache_key") != cache_key
+    if cache_changed or not cache_path.is_file():
+        cache_path.write_bytes(uploaded_file.getbuffer())
+        st.session_state["upload_cache_key"] = cache_key
+        if cache_changed:
+            reset_crop_margins()
+    return cache_path
 
 
 def render_step_indicator(uploaded, result: dict | None, is_processing: bool = False) -> str:
@@ -481,220 +448,6 @@ def render_copy_prompt_button(prompt_text: str) -> None:
     components.html(component_html, height=92)
 
 
-def render_open_ai_buttons(prompt_text: str) -> None:
-    prompt_payload = json.dumps(prompt_text)
-    component_html = """
-    <style>
-      body {
-        margin: 0;
-        font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        background: transparent;
-        color: #f4f4f5;
-      }
-      .ai-grid {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 0.7rem;
-      }
-      button {
-        min-height: 48px;
-        border: 0;
-        border-radius: 13px;
-        color: white;
-        cursor: pointer;
-        font-weight: 800;
-        padding: 0.85rem;
-        width: 100%;
-        box-shadow: 0 12px 28px rgba(0,0,0,0.22);
-      }
-      .claude { background: linear-gradient(135deg, #b45309, #f97316); }
-      .chatgpt { background: linear-gradient(135deg, #047857, #10b981); }
-      .gemini { background: linear-gradient(135deg, #1d4ed8, #38bdf8); }
-      #toast {
-        color: #bbf7d0;
-        min-height: 1.3rem;
-        margin-top: 0.55rem;
-        font-size: 0.9rem;
-      }
-      @media (max-width: 780px) {
-        .ai-grid { grid-template-columns: 1fr; }
-      }
-    </style>
-    <div class="ai-grid">
-      <button class="claude" title="Prompt copied! Paste it after attaching your files." onclick="openAi('https://claude.ai', 'Claude')">🟠 Claude</button>
-      <button class="chatgpt" title="Prompt copied! Paste it after attaching your files." onclick="openAi('https://chatgpt.com', 'ChatGPT')">🟢 ChatGPT</button>
-      <button class="gemini" title="Prompt copied! Paste it after attaching your files." onclick="openAi('https://gemini.google.com', 'Gemini')">🔵 Gemini</button>
-    </div>
-    <div id="toast" aria-live="polite"></div>
-    <script>
-      const promptText = __PROMPT_JSON__;
-      const toast = document.getElementById("toast");
-
-      function showToast(message) {
-        toast.textContent = message;
-      }
-
-      async function copyPrompt(name) {
-        try {
-          if (navigator.clipboard && window.isSecureContext) {
-            await navigator.clipboard.writeText(promptText);
-          } else {
-            const textarea = document.createElement("textarea");
-            textarea.value = promptText;
-            textarea.style.position = "fixed";
-            textarea.style.opacity = "0";
-            document.body.appendChild(textarea);
-            textarea.focus();
-            textarea.select();
-            document.execCommand("copy");
-            textarea.remove();
-          }
-          showToast(`Prompt copied! Paste it into ${name} after attaching your files.`);
-        } catch (error) {
-          showToast("Copy failed. Select and copy the prompt from consultant_ai_prompt.md.");
-        }
-      }
-
-      function openAi(url, name) {
-        copyPrompt(name);
-        window.open(url, "_blank", "noopener,noreferrer");
-      }
-    </script>
-    """.replace("__PROMPT_JSON__", prompt_payload)
-    components.html(component_html, height=96)
-
-
-def render_automation_settings() -> dict:
-    settings = {
-        "drive_enabled": False,
-        "drive_folder_id": "",
-        "drive_service_account_file": "",
-        "drive_service_account_json": "",
-        "slack_enabled": False,
-        "slack_webhook_url": "",
-        "email_enabled": False,
-        "email_recipients": "",
-        "email_cc": "",
-        "email_attach_pdf": False,
-    }
-
-    with st.expander("Automation delivery", expanded=False):
-        st.caption("Optional. Configure secrets with environment variables where possible.")
-
-        settings["drive_enabled"] = st.checkbox(
-            "Auto-save PDF to Google Drive",
-            value=bool(_env("GOOGLE_DRIVE_FOLDER_ID")),
-        )
-        if settings["drive_enabled"]:
-            settings["drive_folder_id"] = st.text_input(
-                "Google Drive folder ID",
-                value=_env("GOOGLE_DRIVE_FOLDER_ID"),
-                help="The destination folder must be shared with the service account.",
-            )
-            settings["drive_service_account_file"] = st.text_input(
-                "Service account JSON file path",
-                value=_env("GOOGLE_SERVICE_ACCOUNT_FILE"),
-                help="Optional if GOOGLE_SERVICE_ACCOUNT_JSON is set.",
-            )
-            pasted_json = st.text_area(
-                "Service account JSON",
-                value="",
-                height=90,
-                help="Optional. Prefer environment variables for long-lived credentials.",
-            )
-            settings["drive_service_account_json"] = encode_service_account_json(
-                pasted_json or _env("GOOGLE_SERVICE_ACCOUNT_JSON")
-            )
-
-        settings["slack_enabled"] = st.checkbox(
-            "Send Slack notification when complete",
-            value=bool(_env("SLACK_WEBHOOK_URL")),
-        )
-        if settings["slack_enabled"]:
-            settings["slack_webhook_url"] = st.text_input(
-                "Slack incoming webhook URL",
-                value="" if _env("SLACK_WEBHOOK_URL") else "",
-                type="password",
-                placeholder="Uses SLACK_WEBHOOK_URL if left blank",
-            )
-
-        settings["email_enabled"] = st.checkbox("Email completion link or PDF", value=False)
-        if settings["email_enabled"]:
-            settings["email_recipients"] = st.text_input(
-                "Consultant email recipients",
-                placeholder="consultant@example.com, teammate@example.com",
-            )
-            settings["email_cc"] = st.text_input(
-                "Optional client CC",
-                placeholder="client@example.com",
-            )
-            settings["email_attach_pdf"] = st.checkbox(
-                "Attach PDF if no Drive link is available",
-                value=True,
-                help="Drive links are preferred for large PDFs.",
-            )
-            st.caption("Email uses SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, and SMTP_FROM.")
-
-    return settings
-
-
-def run_delivery_automations(result: dict, settings: dict) -> list[dict]:
-    pdf_path = Path(str(result.get("pdf_path", "")))
-    if not pdf_path.is_file():
-        return [{"service": "Automation", "ok": False, "message": "PDF was not found.", "url": ""}]
-
-    video_filename = str(result.get("filename") or "video")
-    screenshot_count = len(result.get("screenshots") or [])
-    skipped_count = int(result.get("skipped_empty_frames") or 0)
-    delivery_results = []
-    drive_url = ""
-
-    if settings.get("drive_enabled"):
-        drive_result = upload_to_google_drive(
-            pdf_path,
-            folder_id=str(settings.get("drive_folder_id") or ""),
-            service_account_file=str(settings.get("drive_service_account_file") or ""),
-            service_account_json=str(settings.get("drive_service_account_json") or ""),
-        )
-        drive_url = drive_result.url if drive_result.ok else ""
-        delivery_results.append(drive_result.__dict__)
-
-    message = build_completion_message(
-        video_filename=video_filename,
-        pdf_name=pdf_path.name,
-        screenshot_count=screenshot_count,
-        skipped_count=skipped_count,
-        drive_url=drive_url,
-    )
-
-    if settings.get("slack_enabled"):
-        slack_result = post_slack_notification(
-            str(settings.get("slack_webhook_url") or ""),
-            message,
-        )
-        delivery_results.append(slack_result.__dict__)
-
-    if settings.get("email_enabled"):
-        email_result = send_email_delivery(
-            pdf_path,
-            recipients=split_emails(str(settings.get("email_recipients") or "")),
-            cc=split_emails(str(settings.get("email_cc") or "")),
-            subject=f"Walkthrough PDF ready: {pdf_path.name}",
-            body=message,
-            drive_url=drive_url,
-            attach_pdf=bool(settings.get("email_attach_pdf")) and not drive_url,
-        )
-        delivery_results.append(email_result.__dict__)
-
-    return delivery_results
-
-
-def clear_outputs() -> None:
-    if OUTPUT_DIR.exists():
-        shutil.rmtree(OUTPUT_DIR)
-    (OUTPUT_DIR / "screenshots").mkdir(parents=True, exist_ok=True)
-
-
 def probe_upload(uploaded_file) -> float | None:
     if uploaded_file is None:
         return None
@@ -719,10 +472,10 @@ def run_app() -> None:
     st.markdown(
         """
         <div class="hero-card">
-          <h1>Video Screenshot PDF</h1>
+          <h1>Video Screenshot Document</h1>
           <p>
-            Upload a screen recording, detect meaningful visual changes, extract those
-            frames as screenshots, transcribe the audio locally, and download the outputs.
+            Upload a screen recording, optionally crop the frame, detect meaningful visual changes,
+            and download a Word document with timestamped screenshots and transcript text.
           </p>
         </div>
         """,
@@ -739,7 +492,6 @@ def run_app() -> None:
     st.divider()
 
     st.subheader("Step 2: Configure & Generate")
-    st.caption("Default settings work well for most videos. Expand Advanced Settings only if needed.")
     change_threshold = st.slider(
         "Screenshot sensitivity — Higher = fewer screenshots · Lower = more screenshots",
         min_value=1.0,
@@ -749,67 +501,6 @@ def run_app() -> None:
         help="Adjusts how much the screen must change before a screenshot is captured.",
     )
     st.caption(f"Current sensitivity threshold: {change_threshold:.1f}% changed area")
-
-    with st.expander("⚙️ Advanced Settings", expanded=False):
-        st.markdown("#### Crop recording")
-        st.caption("Use this to remove Zoom/Teams/Meet participant panels or browser chrome before screenshots are saved.")
-        crop_preset = st.selectbox(
-            "Crop preset",
-            options=[
-                "No crop",
-                "Remove right side panel",
-                "Remove left side panel",
-                "Custom crop",
-            ],
-            index=0,
-        )
-        preset_crop = {
-            "No crop": (0.0, 0.0, 0.0, 0.0),
-            "Remove right side panel": (0.0, 25.0, 0.0, 0.0),
-            "Remove left side panel": (25.0, 0.0, 0.0, 0.0),
-            "Custom crop": (0.0, 0.0, 0.0, 0.0),
-        }
-        crop_left_pct, crop_right_pct, crop_top_pct, crop_bottom_pct = preset_crop[crop_preset]
-        if crop_preset == "Custom crop":
-            crop_cols = st.columns(4)
-            with crop_cols[0]:
-                crop_left_pct = st.slider("Crop left (%)", 0.0, 50.0, 0.0, 1.0)
-            with crop_cols[1]:
-                crop_right_pct = st.slider("Crop right (%)", 0.0, 50.0, 0.0, 1.0)
-            with crop_cols[2]:
-                crop_top_pct = st.slider("Crop top (%)", 0.0, 30.0, 0.0, 1.0)
-            with crop_cols[3]:
-                crop_bottom_pct = st.slider("Crop bottom (%)", 0.0, 30.0, 0.0, 1.0)
-
-        st.markdown("#### Detection settings")
-        col_a, col_b = st.columns(2)
-        with col_a:
-            min_gap = st.slider(
-                "Minimum gap between screenshots (seconds)",
-                min_value=0.5,
-                max_value=20.0,
-                value=3.0,
-                step=0.5,
-            )
-        with col_b:
-            sample_interval = st.slider(
-                "Sample every N seconds",
-                min_value=0.25,
-                max_value=5.0,
-                value=1.0,
-                step=0.25,
-                help="Shorter intervals catch faster screen changes but take longer.",
-            )
-
-        st.markdown("#### Transcription settings")
-        whisper_model_size = st.selectbox(
-            "faster-whisper model",
-            options=["tiny", "base", "small", "medium", "large-v3"],
-            index=1,
-            help="Larger models are more accurate but slower and heavier to run locally.",
-        )
-
-    automation_settings = render_automation_settings()
 
     over_size = uploaded is not None and uploaded.size > MAX_UPLOAD_BYTES
     duration = probe_upload(uploaded) if uploaded is not None and not over_size else None
@@ -821,6 +512,13 @@ def run_app() -> None:
             f"{html.escape(uploaded.name)} is ready: {format_ts(duration)} long, "
             f"{uploaded.size / (1024 * 1024):.1f} MB."
         )
+        cache_path = ensure_upload_cached(uploaded)
+        if cache_path is not None:
+            crop_margins = render_video_crop_ui(cache_path)
+            st.session_state["crop_margins_for_pipeline"] = crop_margins
+        else:
+            st.warning("Could not read a preview frame from the video. Screenshots will use the full frame.")
+            reset_crop_margins()
 
     run = st.button(
         "Generate",
@@ -834,56 +532,52 @@ def run_app() -> None:
         render_step_indicator(uploaded, existing_result, run and uploaded is not None),
         unsafe_allow_html=True,
     )
+
     if run and uploaded is not None:
+        cache_path = ensure_upload_cached(uploaded)
+        if cache_path is None or not cache_path.is_file():
+            st.error("Could not cache the uploaded video.")
+            return
         clear_outputs()
-        suffix = Path(uploaded.name).suffix or ".mp4"
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix)
-        os.close(tmp_fd)
+
+        progress = st.progress(0)
+        progress_text = st.empty()
+
+        def on_progress(message: str, percent: int) -> None:
+            progress.progress(max(0, min(100, percent)))
+            progress_text.markdown(f"**{html.escape(message)}** · {percent}%")
+
+        crop_margins = st.session_state.get("crop_margins_for_pipeline") or get_crop_margins()
+        if any(crop_margins.get(side, 0) > 0 for side in ("left", "right", "top", "bottom")):
+            st.caption(
+                f"Applying crop — left {crop_margins['left']:.1f}% · right {crop_margins['right']:.1f}% · "
+                f"top {crop_margins['top']:.1f}% · bottom {crop_margins['bottom']:.1f}%"
+            )
         try:
-            with open(tmp_path, "wb") as f:
-                f.write(uploaded.getbuffer())
-
-            progress = st.progress(0)
-            progress_text = st.empty()
-
-            def on_progress(message: str, percent: int) -> None:
-                progress.progress(max(0, min(100, percent)))
-                progress_text.markdown(f"**{html.escape(message)}** · {percent}%")
-
             with st.status("Processing video...", expanded=True) as status:
                 result = run_screenshot_pipeline(
-                    tmp_path,
+                    str(cache_path),
                     filename=uploaded.name,
                     change_threshold=change_threshold,
-                    min_gap=min_gap,
-                    sample_interval=sample_interval,
-                    crop_left_pct=crop_left_pct,
-                    crop_right_pct=crop_right_pct,
-                    crop_top_pct=crop_top_pct,
-                    crop_bottom_pct=crop_bottom_pct,
-                    whisper_model_size=whisper_model_size,
+                    crop_left_pct=crop_margins["left"],
+                    crop_right_pct=crop_margins["right"],
+                    crop_top_pct=crop_margins["top"],
+                    crop_bottom_pct=crop_margins["bottom"],
                     on_progress=on_progress,
                 )
-                delivery_results = run_delivery_automations(result, automation_settings)
-                if delivery_results:
-                    result["delivery_results"] = delivery_results
                 status.update(label="Outputs ready", state="complete")
 
             st.session_state["last_result"] = result
             save_last_result(result)
         except Exception as exc:
             st.error(f"Processing failed: {exc}")
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
 
     result = st.session_state.get("last_result")
     step_placeholder.markdown(
         render_step_indicator(uploaded, result, False),
         unsafe_allow_html=True,
     )
+
     if result:
         captured_count = len(result.get("screenshots") or [])
         skipped_count = int(result.get("skipped_empty_frames") or 0)
@@ -893,28 +587,24 @@ def run_app() -> None:
             f"✓ {captured_count} screenshots captured · "
             f"{skipped_count} skipped (blank or black frames)"
         )
-        for delivery_result in result.get("delivery_results") or []:
-            service = delivery_result.get("service", "Automation")
-            message = delivery_result.get("message", "")
-            url = delivery_result.get("url", "")
-            if delivery_result.get("ok"):
-                st.success(f"{service}: {message}" + (f" {url}" if url else ""))
-            else:
-                st.warning(f"{service}: {message}")
         if st.button("Start over / clear current result", use_container_width=True):
             clear_current_result()
             st.rerun()
 
     if not result:
-        st.info("The first frame is always included. Later frames are kept only when the screen changes enough to pass the threshold.")
+        st.info(
+            "The first frame is always included. Later frames are kept only when the screen "
+            "changes enough to pass the threshold."
+        )
         return
 
     st.divider()
-    pdf_path = Path(result["pdf_path"])
+    docx_path = get_result_doc_path(result)
     screenshots = result["screenshots"]
     transcript = result.get("transcript") or {}
     transcript_text = str(transcript.get("text") or "")
-    st.subheader("Step 3: Download & Open in AI")
+
+    st.subheader("Step 3: Download")
     st.markdown(
         f'<p class="muted"><b>{len(screenshots)}</b> screenshots extracted from '
         f'<b>{html.escape(str(result["filename"]))}</b>.</p>',
@@ -924,21 +614,21 @@ def run_app() -> None:
         """
         <div class="project-instructions">
           Create a project in your AI model of choice and paste your analysis prompt into the project instructions.
-          Each session, simply open the project, attach the generated PDF and the reference Functional Design Document template if available, and send.
-          The PDF contains the screenshots, transcript, and AI instructions needed to produce a Word-style consultant deliverable.
+          Each session, attach the generated Word document and your reference Functional Design Document template if available.
+          The document contains timestamped screenshots, transcript text, and AI instructions for producing a consultant deliverable.
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    st.markdown("#### Screenshot PDF")
-    st.caption("Transcript context and AI instructions are embedded in this PDF. Attach it to your AI model.")
-    if pdf_path.is_file():
+    st.markdown("#### Screenshot Word document")
+    st.caption("Transcript context and AI instructions are embedded in this document.")
+    if docx_path and docx_path.is_file():
         st.download_button(
-            "Download Screenshot PDF",
-            data=pdf_path.read_bytes(),
-            file_name=pdf_path.name,
-            mime="application/pdf",
+            "Download Word Document",
+            data=docx_path.read_bytes(),
+            file_name=docx_path.name,
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True,
         )
 
@@ -946,10 +636,7 @@ def run_app() -> None:
 
     st.markdown("#### Copy Prompt")
     render_copy_prompt_button(consultant_prompt)
-    st.caption("Paste this into your AI model along with both files")
-
-    st.caption("Open in AI")
-    render_open_ai_buttons(consultant_prompt)
+    st.caption("Paste this into your AI model along with the Word document.")
 
     if screenshots:
         st.divider()

@@ -4,3 +4,11 @@ __pycache__/
 .DS_Store
 .upload_cache/
 outputs/
+
+outputs/
+vendor/
+.upload_cache/
+__pycache__/
+*.pyc
+.DS_Store
+.venv/

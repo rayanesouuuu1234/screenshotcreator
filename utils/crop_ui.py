@@ -1,8 +1,7 @@
-"""Streamlit crop UI — keeps margin % in session state for the pipeline."""
+"""Streamlit-native crop UI — sliders + live preview (no custom component iframe)."""
 
 from __future__ import annotations
 
-import base64
 from pathlib import Path
 
 import cv2
@@ -10,9 +9,10 @@ import numpy as np
 import streamlit as st
 
 from utils.crop import load_preview_frame_bgr
-from utils.crop_selector import render_interactive_crop_selector
 
 DEFAULT_CROP = {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
+MAX_TRIM_PCT = 45.0
+PREVIEW_MAX_WIDTH = 920
 
 
 def normalize_crop_pct(value: dict | None) -> dict[str, float]:
@@ -21,7 +21,7 @@ def normalize_crop_pct(value: dict | None) -> dict[str, float]:
         return crop
     for key in crop:
         try:
-            crop[key] = max(0.0, min(50.0, float(value.get(key, 0.0) or 0.0)))
+            crop[key] = max(0.0, min(MAX_TRIM_PCT, float(value.get(key, 0.0) or 0.0)))
         except (TypeError, ValueError):
             crop[key] = 0.0
     return crop
@@ -45,31 +45,71 @@ def get_crop_margins() -> dict[str, float]:
     )
 
 
-def _bump_crop_init_revision() -> None:
-    st.session_state["crop_init_revision"] = int(st.session_state.get("crop_init_revision", 0)) + 1
-
-
 def reset_crop_margins() -> None:
     set_crop_margins(dict(DEFAULT_CROP))
-    _bump_crop_init_revision()
 
 
-def _crop_init_token(cache_key: str) -> str:
-    revision = int(st.session_state.get("crop_init_revision", 0))
-    return f"{cache_key}::{revision}"
+def _crop_pixels(
+    frame_h: int,
+    frame_w: int,
+    margins: dict[str, float],
+) -> tuple[int, int, int, int]:
+    left = int(frame_w * margins["left"] / 100.0)
+    right = frame_w - int(frame_w * margins["right"] / 100.0)
+    top = int(frame_h * margins["top"] / 100.0)
+    bottom = frame_h - int(frame_h * margins["bottom"] / 100.0)
+    right = max(left + 10, right)
+    bottom = max(top + 10, bottom)
+    return left, top, right, bottom
 
 
-def _frame_to_jpeg_base64(frame: np.ndarray) -> str:
-    ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
-    if not ok:
-        raise ValueError("Could not encode preview frame.")
-    return base64.b64encode(buffer.tobytes()).decode("ascii")
+def draw_crop_preview(frame_bgr: np.ndarray, margins: dict[str, float]) -> np.ndarray:
+    """RGB preview: dimmed outside crop, bright inside, cyan border."""
+    frame_h, frame_w = frame_bgr.shape[:2]
+    left, top, right, bottom = _crop_pixels(frame_h, frame_w, margins)
+
+    rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    dimmed = (rgb.astype(np.float32) * 0.32).astype(np.uint8)
+    preview = dimmed.copy()
+    preview[top:bottom, left:right] = rgb[top:bottom, left:right]
+    cv2.rectangle(preview, (left, top), (right - 1, bottom - 1), (56, 189, 248), 2)
+    return preview
+
+
+def _render_margin_sliders(cache_key: str) -> dict[str, float]:
+    margins = get_crop_margins()
+    sides = (
+        ("left", "Trim left"),
+        ("right", "Trim right"),
+        ("top", "Trim top"),
+        ("bottom", "Trim bottom"),
+    )
+
+    row1, row2 = st.columns(2), st.columns(2)
+    updated = dict(margins)
+
+    for col, (side, label) in zip((row1[0], row1[1], row2[0], row2[1]), sides):
+        with col:
+            value = st.slider(
+                label,
+                min_value=0.0,
+                max_value=MAX_TRIM_PCT,
+                value=float(margins.get(side, 0.0)),
+                step=0.5,
+                format="%.1f%%",
+                key=f"crop_trim_{side}_{cache_key}",
+            )
+            updated[side] = value
+
+    set_crop_margins(updated)
+    return get_crop_margins()
 
 
 def render_video_crop_ui(cache_path: Path) -> dict[str, float]:
-    """Bounded drag crop; returns margin % applied to all frames when generating."""
+    """Crop via margin sliders and a live preview; same % semantics as the pipeline."""
     cache_key = st.session_state.get("upload_cache_key", "")
     preview_key = f"crop_preview::{cache_key}"
+
     if st.session_state.get("crop_preview_key") != preview_key:
         frame = load_preview_frame_bgr(cache_path)
         if frame is None:
@@ -84,29 +124,22 @@ def render_video_crop_ui(cache_path: Path) -> dict[str, float]:
         reset_crop_margins()
         return get_crop_margins()
 
-    height, width = frame.shape[:2]
-    image_b64 = _frame_to_jpeg_base64(frame)
-    display_max = 920
-    component_height = max(1, int(height * min(1.0, display_max / max(width, 1)))) + 24
-
     header_col, reset_col = st.columns([5, 1])
     with header_col:
-        st.caption("Optional crop — drag handles, or Reset for full frame.")
+        st.caption("Optional crop — adjust trim sliders; bright area is kept.")
     with reset_col:
         if st.button("Reset", help="Use the full frame", use_container_width=True):
             reset_crop_margins()
             st.rerun()
 
-    updated = render_interactive_crop_selector(
-        image_b64,
-        width,
-        height,
-        get_crop_margins(),
-        height=component_height,
-        init_token=_crop_init_token(cache_key),
-        key=f"video_crop_{cache_key}",
-    )
-    if updated:
-        set_crop_margins(updated)
+    margins = _render_margin_sliders(cache_key)
+    preview_rgb = draw_crop_preview(frame, margins)
+    st.image(preview_rgb, use_container_width=True, channels="RGB")
 
-    return get_crop_margins()
+    frame_h, frame_w = frame.shape[:2]
+    left, top, right, bottom = _crop_pixels(frame_h, frame_w, margins)
+    crop_w = right - left
+    crop_h = bottom - top
+    st.caption(f"Export region: {crop_w}×{crop_h} px ({100 * crop_w / frame_w:.0f}% × {100 * crop_h / frame_h:.0f}% of frame)")
+
+    return margins

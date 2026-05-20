@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from utils.exporter import create_screenshots_docx
+from utils.exporter import create_screenshots_pdf
 from utils.frame_quality import is_visually_empty_image
 from utils.scene_detector import detect_scenes
 from utils.transcriber import transcribe_video
@@ -80,7 +80,7 @@ def run_screenshot_pipeline(
     transcript_text = str(transcript.get("text") or "")
 
     progress("Building document", 94)
-    docx_path = create_screenshots_docx(
+    pdf_path = create_screenshots_pdf(
         screenshots,
         video_filename=filename,
         transcript_text=transcript_text,
@@ -101,7 +101,7 @@ def run_screenshot_pipeline(
         },
         "screenshots": screenshots,
         "skipped_empty_frames": skipped_empty_frames,
-        "docx_path": str(docx_path),
+        "pdf_path": str(pdf_path),
         "transcript": transcript,
     }
 

@@ -1,27 +1,33 @@
-"""Word document export: large screenshots + paginated transcript."""
+"""PDF export: packed screenshots + dense paginated transcript."""
 
 from __future__ import annotations
 
 import re
+import textwrap
 from datetime import date
 from pathlib import Path
 
-from docx import Document
-from docx.enum.text import WD_LINE_SPACING
-from docx.shared import Inches, Pt, RGBColor
 from PIL import Image
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.units import inch
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas
 
 OUTPUT_DIR = Path("outputs")
 
-# US Letter with tight margins — maximize content for AI readability
-PAGE_MARGIN = Inches(0.45)
-PAGE_IMAGE_MAX_WIDTH = Inches(7.6)
-PAGE_IMAGE_MAX_HEIGHT = Inches(9.2)
-TIMESTAMP_FONT_SIZE = Pt(9)
-TRANSCRIPT_HEADING_SIZE = Pt(10)
-TRANSCRIPT_FONT_SIZE = Pt(8)
-TRANSCRIPT_LINES_PER_PAGE = 56
-TRANSCRIPT_CHARS_PER_LINE = 105
+PAGE_W, PAGE_H = letter
+MARGIN = 0.28 * inch
+CONTENT_W = PAGE_W - 2 * MARGIN
+CONTENT_H = PAGE_H - 2 * MARGIN
+
+TIMESTAMP_PT = 7.5
+TIMESTAMP_LEAD = 10
+SHOT_GAP = 0.06 * inch
+MIN_SLOT_H = 1.35 * inch
+
+TRANSCRIPT_PT = 6.5
+TRANSCRIPT_LEAD = 7.5
+TRANSCRIPT_CHARS_PER_LINE = 118
 
 
 def _safe_stem(filename: str) -> str:
@@ -30,121 +36,173 @@ def _safe_stem(filename: str) -> str:
     return stem or "video"
 
 
-def default_docx_name(video_filename: str) -> str:
-    return f"{_safe_stem(video_filename)}_{date.today().isoformat()}.docx"
+def default_pdf_name(video_filename: str) -> str:
+    return f"{_safe_stem(video_filename)}_{date.today().isoformat()}.pdf"
 
 
-def _set_page_margins(doc: Document) -> None:
-    for section in doc.sections:
-        section.top_margin = PAGE_MARGIN
-        section.bottom_margin = PAGE_MARGIN
-        section.left_margin = PAGE_MARGIN
-        section.right_margin = PAGE_MARGIN
-
-
-def _image_display_width(image_path: Path) -> Inches:
+def _image_aspect(image_path: Path) -> float:
     with Image.open(image_path) as img:
         width_px, height_px = img.size
     if width_px <= 0 or height_px <= 0:
-        return PAGE_IMAGE_MAX_WIDTH
-
-    max_w = PAGE_IMAGE_MAX_WIDTH.inches
-    max_h = PAGE_IMAGE_MAX_HEIGHT.inches
-    aspect = width_px / height_px
-    display_w = max_w
-    display_h = display_w / aspect
-    if display_h > max_h:
-        display_w = max_h * aspect
-    return Inches(display_w)
+        return 9 / 16
+    return height_px / width_px
 
 
-def _estimate_line_units(text: str) -> int:
-    if not text:
-        return 0
-    return max(1, (len(text) + TRANSCRIPT_CHARS_PER_LINE - 1) // TRANSCRIPT_CHARS_PER_LINE)
+def _natural_image_height(image_path: Path) -> float:
+    return CONTENT_W * _image_aspect(image_path)
 
 
-def _add_transcript_paragraph(doc: Document, text: str) -> None:
-    paragraph = doc.add_paragraph()
-    paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
-    paragraph.paragraph_format.space_before = Pt(0)
-    paragraph.paragraph_format.space_after = Pt(1)
-    run = paragraph.add_run(text)
-    run.font.size = TRANSCRIPT_FONT_SIZE
-    run.font.color.rgb = RGBColor(30, 30, 30)
+def _shot_block_height(image_path: Path) -> float:
+    return TIMESTAMP_LEAD + _natural_image_height(image_path)
 
 
-def _add_paginated_transcript(doc: Document, transcript_text: str) -> None:
-    text = transcript_text.strip()
-    if not text:
+def _layout_page_heights(page_shots: list[dict]) -> list[float]:
+    """Scale image heights to fill the page (up or down) while keeping full width."""
+    image_paths = [Path(str(s.get("path", ""))) for s in page_shots]
+    natural = [_natural_image_height(p) for p in image_paths if p.is_file()]
+    if not natural:
+        return []
+
+    n = len(natural)
+    gaps = SHOT_GAP * max(0, n - 1)
+    labels = TIMESTAMP_LEAD * n
+    budget = CONTENT_H - gaps - labels
+    total = sum(natural)
+    scale = budget / total if total > 0 else 1.0
+    return [h * scale for h in natural]
+
+
+def _pack_screenshot_pages(screenshots: list[dict]) -> list[list[dict]]:
+    """Greedy vertical packing — multiple screenshots per page when they fit."""
+    pages: list[list[dict]] = []
+    current: list[dict] = []
+    used = 0.0
+
+    for shot in screenshots:
+        image_path = Path(str(shot.get("path", "")))
+        if not image_path.is_file():
+            continue
+
+        block_h = max(_shot_block_height(image_path), MIN_SLOT_H)
+        gap = SHOT_GAP if current else 0.0
+        needed = used + gap + block_h
+
+        if current and needed > CONTENT_H:
+            pages.append(current)
+            current = [shot]
+            used = block_h
+        else:
+            used = needed
+            current.append(shot)
+
+    if current:
+        pages.append(current)
+    return pages
+
+
+def _draw_screenshot_page(c: canvas.Canvas, page_shots: list[dict]) -> None:
+    valid_shots = [
+        shot
+        for shot in page_shots
+        if Path(str(shot.get("path", ""))).is_file()
+    ]
+    if not valid_shots:
         return
 
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    heights = _layout_page_heights(valid_shots)
+    y = PAGE_H - MARGIN
+
+    for index, (shot, image_h) in enumerate(zip(valid_shots, heights, strict=False)):
+        image_path = Path(str(shot.get("path", "")))
+
+        if index > 0:
+            y -= SHOT_GAP
+
+        label = str(shot.get("label", "00:00:00"))
+        c.setFont("Helvetica-Bold", TIMESTAMP_PT)
+        c.setFillColorRGB(0.2, 0.2, 0.2)
+        c.drawString(MARGIN, y - TIMESTAMP_LEAD + 2, label)
+        y -= TIMESTAMP_LEAD
+
+        c.drawImage(
+            ImageReader(str(image_path)),
+            MARGIN,
+            y - image_h,
+            width=CONTENT_W,
+            height=image_h,
+            preserveAspectRatio=True,
+            anchor="nw",
+            mask="auto",
+        )
+        y -= image_h
+
+
+def _wrap_transcript_lines(transcript_text: str) -> list[str]:
+    lines: list[str] = []
+    for raw in transcript_text.splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        lines.extend(textwrap.wrap(stripped, width=TRANSCRIPT_CHARS_PER_LINE) or [stripped])
+    return lines
+
+
+def _draw_transcript_pages(c: canvas.Canvas, transcript_text: str) -> None:
+    lines = _wrap_transcript_lines(transcript_text)
     if not lines:
         return
 
-    doc.add_page_break()
-    heading = doc.add_heading("Transcript", level=1)
-    if heading.runs:
-        heading.runs[0].font.size = TRANSCRIPT_HEADING_SIZE
+    c.setFont("Helvetica", TRANSCRIPT_PT)
+    c.setFillColorRGB(0.12, 0.12, 0.12)
 
-    used_on_page = 0
+    y = PAGE_H - MARGIN
+    line_h = TRANSCRIPT_LEAD
+    bottom = MARGIN
 
     for line in lines:
-        units = _estimate_line_units(line)
-        if used_on_page > 0 and used_on_page + units > TRANSCRIPT_LINES_PER_PAGE:
-            doc.add_page_break()
-            used_on_page = 0
+        if y - line_h < bottom:
+            c.showPage()
+            c.setFont("Helvetica", TRANSCRIPT_PT)
+            c.setFillColorRGB(0.12, 0.12, 0.12)
+            y = PAGE_H - MARGIN
 
-        _add_transcript_paragraph(doc, line)
-        used_on_page += units
+        c.drawString(MARGIN, y - line_h, line)
+        y -= line_h
 
 
-def create_screenshots_docx(
+def create_screenshots_pdf(
     screenshots: list[dict],
     *,
     video_filename: str,
     output_path: str | Path | None = None,
     transcript_text: str = "",
 ) -> Path:
-    """Create a Word document with full-page screenshots and a paginated transcript appendix."""
+    """Create a PDF with packed screenshots and a dense transcript appendix."""
     if not screenshots:
         raise ValueError("No screenshots were generated, so a document cannot be created.")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    out = Path(output_path) if output_path else OUTPUT_DIR / default_docx_name(video_filename)
+    out = Path(output_path) if output_path else OUTPUT_DIR / default_pdf_name(video_filename)
 
-    doc = Document()
-    _set_page_margins(doc)
-    rendered = 0
-
-    for index, shot in enumerate(screenshots, start=1):
-        image_path = Path(str(shot.get("path", "")))
-        if not image_path.is_file():
-            continue
-
-        if rendered > 0:
-            doc.add_page_break()
-
-        doc.add_picture(str(image_path), width=_image_display_width(image_path))
-
-        label = str(shot.get("label", "00:00:00"))
-        ts = doc.add_paragraph()
-        ts.paragraph_format.space_before = Pt(2)
-        ts.paragraph_format.space_after = Pt(0)
-        run = ts.add_run(label)
-        run.font.size = TIMESTAMP_FONT_SIZE
-        run.font.color.rgb = RGBColor(60, 60, 60)
-        run.bold = True
-        rendered += 1
-
-    if rendered == 0:
+    pages = _pack_screenshot_pages(screenshots)
+    if not pages:
         raise ValueError("None of the generated screenshot files could be read.")
 
-    _add_paginated_transcript(doc, transcript_text)
-    doc.save(out)
+    c = canvas.Canvas(str(out), pagesize=letter)
+
+    has_transcript = bool(transcript_text.strip())
+    for index, page_shots in enumerate(pages):
+        _draw_screenshot_page(c, page_shots)
+        if index < len(pages) - 1 or has_transcript:
+            c.showPage()
+
+    if has_transcript:
+        _draw_transcript_pages(c, transcript_text)
+
+    c.save()
     return out
 
 
-create_screenshots_pdf = create_screenshots_docx
-_default_pdf_name = default_docx_name
+# Backward-compatible alias
+create_screenshots_docx = create_screenshots_pdf
+default_docx_name = default_pdf_name

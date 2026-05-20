@@ -68,32 +68,12 @@ APP_CSS = """
     width: 22px !important;
     height: 22px !important;
   }
-  .stButton > button[kind="primary"] {
-    min-height: 3.1rem;
-    font-size: 1.1rem;
-    font-weight: 700;
-    border-radius: 14px;
-    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
-    color: #ffffff !important;
-    border: 1px solid #3b82f6 !important;
-  }
-  .stButton > button[kind="primary"]:hover {
-    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
-    color: #ffffff !important;
-  }
-  .stButton > button[kind="primary"]:disabled {
-    background: #334155 !important;
-    color: #94a3b8 !important;
-    border-color: #475569 !important;
-  }
+  .stButton > button[kind="primary"],
   .stDownloadButton > button {
     min-height: 3.1rem;
     font-size: 1.1rem;
     font-weight: 700;
     border-radius: 14px;
-    background: #0f766e !important;
-    color: #ffffff !important;
-    border: 1px solid #14b8a6 !important;
   }
   hr { margin: 1.25rem 0; opacity: 0.25; }
 </style>
@@ -184,7 +164,7 @@ def run_app() -> None:
     st.markdown(APP_CSS, unsafe_allow_html=True)
     restore_last_result()
 
-    st.title("Screenshot Document")
+    st.title("Recording Analyzer")
 
     uploaded = st.file_uploader(
         "Video",
@@ -272,14 +252,14 @@ def run_app() -> None:
             st.error(f"Failed: {exc}")
 
     result = st.session_state.get("last_result")
-    pdf_path = get_result_doc_path(result) if result else None
+    docx_path = get_result_doc_path(result) if result else None
 
-    if pdf_path and pdf_path.is_file():
+    if docx_path and docx_path.is_file():
         st.download_button(
-            "Download PDF",
-            data=pdf_path.read_bytes(),
-            file_name=pdf_path.name,
-            mime="application/pdf",
+            "Download Word Document",
+            data=docx_path.read_bytes(),
+            file_name=docx_path.name,
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True,
         )
 

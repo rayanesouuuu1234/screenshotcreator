@@ -1,10 +1,255 @@
-"""Interactive video-frame crop selector for Streamlit."""
+"""Bounded drag crop using Streamlit v2 components (no external CDN)."""
 
 from __future__ import annotations
 
-import json
+import streamlit as st
 
-import streamlit.components.v1 as components
+_CROP_HTML = """
+<div class="crop-wrap">
+  <div id="crop-frame">
+    <img id="crop-preview" alt="Video frame" />
+    <div class="shade" id="shade-top"></div>
+    <div class="shade" id="shade-left"></div>
+    <div class="shade" id="shade-right"></div>
+    <div class="shade" id="shade-bottom"></div>
+    <div id="crop-box">
+      <div class="handle n" data-handle="n"></div>
+      <div class="handle s" data-handle="s"></div>
+      <div class="handle e" data-handle="e"></div>
+      <div class="handle w" data-handle="w"></div>
+      <div class="handle ne" data-handle="ne"></div>
+      <div class="handle nw" data-handle="nw"></div>
+      <div class="handle se" data-handle="se"></div>
+      <div class="handle sw" data-handle="sw"></div>
+    </div>
+  </div>
+</div>
+"""
+
+_CROP_CSS = """
+.crop-wrap {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  user-select: none;
+  touch-action: none;
+}
+#crop-frame {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid rgba(96, 165, 250, 0.4);
+  background: #0f172a;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+}
+#crop-preview {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.shade {
+  position: absolute;
+  background: rgba(2, 6, 23, 0.62);
+  pointer-events: none;
+}
+#crop-box {
+  position: absolute;
+  border: 2px solid #38bdf8;
+  cursor: move;
+  box-sizing: border-box;
+}
+.handle {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  background: #fff;
+  border: 2px solid #2563eb;
+  border-radius: 2px;
+  z-index: 3;
+}
+.handle.n { top: -6px; left: 50%; transform: translateX(-50%); cursor: n-resize; }
+.handle.s { bottom: -6px; left: 50%; transform: translateX(-50%); cursor: s-resize; }
+.handle.e { right: -6px; top: 50%; transform: translateY(-50%); cursor: e-resize; }
+.handle.w { left: -6px; top: 50%; transform: translateY(-50%); cursor: w-resize; }
+.handle.ne { top: -6px; right: -6px; cursor: ne-resize; }
+.handle.nw { top: -6px; left: -6px; cursor: nw-resize; }
+.handle.se { bottom: -6px; right: -6px; cursor: se-resize; }
+.handle.sw { bottom: -6px; left: -6px; cursor: sw-resize; }
+"""
+
+_CROP_JS = """
+let displayW = 1;
+let displayH = 1;
+let minSize = 48;
+let x = 0;
+let y = 0;
+let w = 1;
+let h = 1;
+let dragMode = null;
+let startX = 0;
+let startY = 0;
+let startBox = null;
+
+function initFromMargins(margins) {
+  const crop = margins || { left: 0, right: 0, top: 0, bottom: 0 };
+  x = (crop.left / 100) * displayW;
+  y = (crop.top / 100) * displayH;
+  w = displayW - ((crop.left + crop.right) / 100) * displayW;
+  h = displayH - ((crop.top + crop.bottom) / 100) * displayH;
+}
+
+function clampBox() {
+  w = Math.max(minSize, Math.min(w, displayW));
+  h = Math.max(minSize, Math.min(h, displayH));
+  x = Math.max(0, Math.min(x, displayW - w));
+  y = Math.max(0, Math.min(y, displayH - h));
+}
+
+function toPct() {
+  return {
+    left: Math.round((x / displayW) * 1000) / 10,
+    right: Math.round(((displayW - x - w) / displayW) * 1000) / 10,
+    top: Math.round((y / displayH) * 1000) / 10,
+    bottom: Math.round(((displayH - y - h) / displayH) * 1000) / 10,
+  };
+}
+
+function renderCrop(frame, cropBox, shades) {
+  clampBox();
+  cropBox.style.left = x + "px";
+  cropBox.style.top = y + "px";
+  cropBox.style.width = w + "px";
+  cropBox.style.height = h + "px";
+
+  shades.top.style.left = "0";
+  shades.top.style.top = "0";
+  shades.top.style.width = displayW + "px";
+  shades.top.style.height = y + "px";
+
+  shades.left.style.left = "0";
+  shades.left.style.top = y + "px";
+  shades.left.style.width = x + "px";
+  shades.left.style.height = h + "px";
+
+  shades.right.style.left = (x + w) + "px";
+  shades.right.style.top = y + "px";
+  shades.right.style.width = (displayW - x - w) + "px";
+  shades.right.style.height = h + "px";
+
+  shades.bottom.style.left = "0";
+  shades.bottom.style.top = (y + h) + "px";
+  shades.bottom.style.width = displayW + "px";
+  shades.bottom.style.height = (displayH - y - h) + "px";
+}
+
+function pointerPos(frame, event) {
+  const rect = frame.getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(displayW, event.clientX - rect.left)),
+    y: Math.max(0, Math.min(displayH, event.clientY - rect.top)),
+  };
+}
+
+export default function(component) {
+  const { parentElement, data, setStateValue } = component;
+  if (!data) return;
+
+  const frame = parentElement.querySelector("#crop-frame");
+  const preview = parentElement.querySelector("#crop-preview");
+  const cropBox = parentElement.querySelector("#crop-box");
+  if (!frame || !preview || !cropBox) return;
+
+  const shades = {
+    top: parentElement.querySelector("#shade-top"),
+    left: parentElement.querySelector("#shade-left"),
+    right: parentElement.querySelector("#shade-right"),
+    bottom: parentElement.querySelector("#shade-bottom"),
+  };
+
+  const initToken = String(data.init_token || "");
+  if (frame.dataset.initToken !== initToken) {
+    frame.dataset.initToken = initToken;
+    displayW = Math.max(1, Number(data.display_w || 1));
+    displayH = Math.max(1, Number(data.display_h || 1));
+    minSize = Math.max(48, Math.min(displayW, displayH) * 0.1);
+    frame.style.width = displayW + "px";
+    frame.style.height = displayH + "px";
+    if (data.image_b64) {
+      preview.src = "data:image/jpeg;base64," + data.image_b64;
+    }
+    initFromMargins(data.margins);
+    renderCrop(frame, cropBox, shades);
+    setStateValue("margins", toPct());
+  }
+
+  if (frame.dataset.listeners !== "1") {
+    frame.dataset.listeners = "1";
+
+    function onPointerDown(event) {
+      event.preventDefault();
+      const handle = event.target.getAttribute("data-handle");
+      dragMode = handle || "move";
+      const pos = pointerPos(frame, event);
+      startX = pos.x;
+      startY = pos.y;
+      startBox = { x: x, y: y, w: w, h: h };
+      cropBox.setPointerCapture(event.pointerId);
+    }
+
+    function onPointerMove(event) {
+      if (!dragMode || !startBox) return;
+      const pos = pointerPos(frame, event);
+      const dx = pos.x - startX;
+      const dy = pos.y - startY;
+      const box = startBox;
+
+      if (dragMode === "move") {
+        x = box.x + dx;
+        y = box.y + dy;
+      } else {
+        if (dragMode.indexOf("w") >= 0) {
+          x = box.x + dx;
+          w = box.w - dx;
+        }
+        if (dragMode.indexOf("e") >= 0) {
+          w = box.w + dx;
+        }
+        if (dragMode.indexOf("n") >= 0) {
+          y = box.y + dy;
+          h = box.h - dy;
+        }
+        if (dragMode.indexOf("s") >= 0) {
+          h = box.h + dy;
+        }
+      }
+      renderCrop(frame, cropBox, shades);
+    }
+
+    function onPointerUp(event) {
+      if (!dragMode) return;
+      dragMode = null;
+      startBox = null;
+      try { cropBox.releasePointerCapture(event.pointerId); } catch (err) {}
+      renderCrop(frame, cropBox, shades);
+      setStateValue("margins", toPct());
+    }
+
+    cropBox.addEventListener("pointerdown", onPointerDown);
+    cropBox.addEventListener("pointermove", onPointerMove);
+    cropBox.addEventListener("pointerup", onPointerUp);
+    cropBox.addEventListener("pointercancel", onPointerUp);
+  }
+}
+"""
+
+_crop_component = st.components.v2.component(
+    "video_crop_bounds",
+    html=_CROP_HTML,
+    css=_CROP_CSS,
+    js=_CROP_JS,
+    isolate_styles=False,
+)
 
 
 def render_interactive_crop_selector(
@@ -14,280 +259,32 @@ def render_interactive_crop_selector(
     initial_crop: dict[str, float],
     *,
     height: int,
+    init_token: str = "",
+    key: str = "video_crop_selector",
 ) -> dict[str, float] | None:
-    """Render a draggable crop box; returns margin percentages or None if unchanged."""
-    initial_json = json.dumps(initial_crop)
     display_max = 920
     display_w = max(1, int(nat_w * min(1.0, display_max / max(nat_w, 1))))
     display_h = max(1, int(nat_h * display_w / max(nat_w, 1)))
 
-    html = f"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8" />
-<style>
-  * {{ box-sizing: border-box; }}
-  body {{
-    margin: 0;
-    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    background: transparent;
-    color: #e5e7eb;
-  }}
-  .wrap {{
-    display: inline-block;
-    position: relative;
-    max-width: 100%;
-    user-select: none;
-    touch-action: none;
-  }}
-  #frame {{
-    position: relative;
-    width: {display_w}px;
-    height: {display_h}px;
-    overflow: hidden;
-    border-radius: 12px;
-    border: 1px solid rgba(96, 165, 250, 0.35);
-    background: #0f172a;
-  }}
-  #preview {{
-    display: block;
-    width: 100%;
-    height: 100%;
-    pointer-events: none;
-  }}
-  .shade {{
-    position: absolute;
-    background: rgba(0, 0, 0, 0.55);
-    pointer-events: none;
-  }}
-  #cropBox {{
-    position: absolute;
-    border: 2px solid #60a5fa;
-    box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.65) inset;
-    cursor: move;
-  }}
-  .handle {{
-    position: absolute;
-    width: 12px;
-    height: 12px;
-    background: #fff;
-    border: 2px solid #2563eb;
-    border-radius: 3px;
-    z-index: 3;
-  }}
-  .handle.n {{ top: -7px; left: 50%; transform: translateX(-50%); cursor: n-resize; }}
-  .handle.s {{ bottom: -7px; left: 50%; transform: translateX(-50%); cursor: s-resize; }}
-  .handle.e {{ right: -7px; top: 50%; transform: translateY(-50%); cursor: e-resize; }}
-  .handle.w {{ left: -7px; top: 50%; transform: translateY(-50%); cursor: w-resize; }}
-  .handle.ne {{ top: -7px; right: -7px; cursor: ne-resize; }}
-  .handle.nw {{ top: -7px; left: -7px; cursor: nw-resize; }}
-  .handle.se {{ bottom: -7px; right: -7px; cursor: se-resize; }}
-  .handle.sw {{ bottom: -7px; left: -7px; cursor: sw-resize; }}
-  .hint {{
-    margin-top: 0.65rem;
-    font-size: 0.88rem;
-    color: #9ca3af;
-  }}
-  .values {{
-    margin-top: 0.35rem;
-    font-size: 0.82rem;
-    color: #cbd5e1;
-    font-variant-numeric: tabular-nums;
-  }}
-</style>
-</head>
-<body>
-  <div class="wrap" id="root">
-    <div id="frame">
-      <img id="preview" alt="Video preview frame" src="data:image/jpeg;base64,{image_b64}" />
-      <div class="shade" id="shadeTop"></div>
-      <div class="shade" id="shadeLeft"></div>
-      <div class="shade" id="shadeRight"></div>
-      <div class="shade" id="shadeBottom"></div>
-      <div id="cropBox">
-        <div class="handle n" data-handle="n"></div>
-        <div class="handle s" data-handle="s"></div>
-        <div class="handle e" data-handle="e"></div>
-        <div class="handle w" data-handle="w"></div>
-        <div class="handle ne" data-handle="ne"></div>
-        <div class="handle nw" data-handle="nw"></div>
-        <div class="handle se" data-handle="se"></div>
-        <div class="handle sw" data-handle="sw"></div>
-      </div>
-    </div>
-  </div>
-  <div class="hint">Drag the box or corner/edge handles to crop away meeting panels or browser chrome.</div>
-  <div class="values" id="values"></div>
-<script>
-  const DISPLAY_W = {display_w};
-  const DISPLAY_H = {display_h};
-  const MIN_SIZE = Math.max(40, Math.min(DISPLAY_W, DISPLAY_H) * 0.08);
-  const initial = {initial_json};
-
-  const cropBox = document.getElementById("cropBox");
-  const valuesEl = document.getElementById("values");
-  const shades = {{
-    top: document.getElementById("shadeTop"),
-    left: document.getElementById("shadeLeft"),
-    right: document.getElementById("shadeRight"),
-    bottom: document.getElementById("shadeBottom"),
-  }};
-
-  let x = (initial.left / 100) * DISPLAY_W;
-  let y = (initial.top / 100) * DISPLAY_H;
-  let w = DISPLAY_W - ((initial.left + initial.right) / 100) * DISPLAY_W;
-  let h = DISPLAY_H - ((initial.top + initial.bottom) / 100) * DISPLAY_H;
-
-  let dragMode = null;
-  let startX = 0;
-  let startY = 0;
-  let startBox = null;
-
-  function clampBox() {{
-    w = Math.max(MIN_SIZE, Math.min(w, DISPLAY_W));
-    h = Math.max(MIN_SIZE, Math.min(h, DISPLAY_H));
-    x = Math.max(0, Math.min(x, DISPLAY_W - w));
-    y = Math.max(0, Math.min(y, DISPLAY_H - h));
-  }}
-
-  function toPct() {{
-    return {{
-      left: Math.round((x / DISPLAY_W) * 1000) / 10,
-      right: Math.round(((DISPLAY_W - x - w) / DISPLAY_W) * 1000) / 10,
-      top: Math.round((y / DISPLAY_H) * 1000) / 10,
-      bottom: Math.round(((DISPLAY_H - y - h) / DISPLAY_H) * 1000) / 10,
-    }};
-  }}
-
-  function updateValuesLabel() {{
-    const payload = toPct();
-    valuesEl.textContent =
-      "Crop margins — left: " + payload.left + "% · right: " + payload.right +
-      "% · top: " + payload.top + "% · bottom: " + payload.bottom + "%";
-  }}
-
-  function sendValue() {{
-    updateValuesLabel();
-    const payload = toPct();
-    window.parent.postMessage(
-      {{
-        type: "streamlit:setComponentValue",
-        value: payload,
-        isStreamlitMessage: true,
-      }},
-      "*",
-    );
-  }}
-
-  function render() {{
-    clampBox();
-    cropBox.style.left = x + "px";
-    cropBox.style.top = y + "px";
-    cropBox.style.width = w + "px";
-    cropBox.style.height = h + "px";
-
-    shades.top.style.left = "0";
-    shades.top.style.top = "0";
-    shades.top.style.width = DISPLAY_W + "px";
-    shades.top.style.height = y + "px";
-
-    shades.left.style.left = "0";
-    shades.left.style.top = y + "px";
-    shades.left.style.width = x + "px";
-    shades.left.style.height = h + "px";
-
-    shades.right.style.left = (x + w) + "px";
-    shades.right.style.top = y + "px";
-    shades.right.style.width = (DISPLAY_W - x - w) + "px";
-    shades.right.style.height = h + "px";
-
-    shades.bottom.style.left = "0";
-    shades.bottom.style.top = (y + h) + "px";
-    shades.bottom.style.width = DISPLAY_W + "px";
-    shades.bottom.style.height = (DISPLAY_H - y - h) + "px";
-  }}
-
-  function pointerPos(event) {{
-    const rect = document.getElementById("frame").getBoundingClientRect();
-    return {{
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-    }};
-  }}
-
-  function onPointerDown(event) {{
-    event.preventDefault();
-    const handle = event.target.getAttribute("data-handle");
-    dragMode = handle || "move";
-    const pos = pointerPos(event);
-    startX = pos.x;
-    startY = pos.y;
-    startBox = {{ x: x, y: y, w: w, h: h }};
-    cropBox.setPointerCapture(event.pointerId);
-  }}
-
-  function onPointerMove(event) {{
-    if (!dragMode || !startBox) return;
-    const pos = pointerPos(event);
-    const dx = pos.x - startX;
-    const dy = pos.y - startY;
-    const box = startBox;
-
-    if (dragMode === "move") {{
-      x = box.x + dx;
-      y = box.y + dy;
-    }} else {{
-      if (dragMode.indexOf("w") >= 0) {{
-        x = box.x + dx;
-        w = box.w - dx;
-      }}
-      if (dragMode.indexOf("e") >= 0) {{
-        w = box.w + dx;
-      }}
-      if (dragMode.indexOf("n") >= 0) {{
-        y = box.y + dy;
-        h = box.h - dy;
-      }}
-      if (dragMode.indexOf("s") >= 0) {{
-        h = box.h + dy;
-      }}
-    }}
-    render();
-    updateValuesLabel();
-  }}
-
-  function onPointerUp(event) {{
-    if (!dragMode) return;
-    dragMode = null;
-    startBox = null;
-    try {{ cropBox.releasePointerCapture(event.pointerId); }} catch (err) {{}}
-    sendValue();
-  }}
-
-  cropBox.addEventListener("pointerdown", onPointerDown);
-  cropBox.addEventListener("pointermove", onPointerMove);
-  cropBox.addEventListener("pointerup", onPointerUp);
-  cropBox.addEventListener("pointercancel", onPointerUp);
-  render();
-  updateValuesLabel();
-</script>
-</body>
-</html>"""
-
-
-    returned = components.html(html, height=height, scrolling=False)
-    if returned is None:
-        return None
-    if isinstance(returned, str):
-        try:
-            returned = json.loads(returned)
-        except json.JSONDecodeError:
-            return None
-    if not isinstance(returned, dict):
+    result = _crop_component(
+        key=key,
+        data={
+            "image_b64": image_b64,
+            "display_w": display_w,
+            "display_h": display_h,
+            "margins": initial_crop,
+            "init_token": init_token,
+        },
+        default={"margins": initial_crop},
+        on_margins_change=lambda: None,
+        height=height,
+    )
+    margins = getattr(result, "margins", None)
+    if not isinstance(margins, dict):
         return None
     return {
-        "left": float(returned.get("left", 0.0)),
-        "right": float(returned.get("right", 0.0)),
-        "top": float(returned.get("top", 0.0)),
-        "bottom": float(returned.get("bottom", 0.0)),
+        "left": float(margins.get("left", 0.0)),
+        "right": float(margins.get("right", 0.0)),
+        "top": float(margins.get("top", 0.0)),
+        "bottom": float(margins.get("bottom", 0.0)),
     }

@@ -1,4 +1,4 @@
-"""Streamlit UI for extracting meaningful video screen changes into a Word document."""
+"""Streamlit UI: walkthrough video → timestamped screenshots + transcript document."""
 
 from __future__ import annotations
 
@@ -7,12 +7,9 @@ import importlib
 import json
 import os
 import shutil
-import tempfile
 from pathlib import Path
 
-import cv2
 import streamlit as st
-import streamlit.components.v1 as components
 
 from utils.crop_ui import get_crop_margins, render_video_crop_ui, reset_crop_margins
 
@@ -27,13 +24,12 @@ APP_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = APP_DIR / "outputs"
 UPLOAD_CACHE_DIR = APP_DIR / ".upload_cache"
 LAST_RESULT_PATH = OUTPUT_DIR / "last_result.json"
-PROMPT_PATH = APP_DIR / "consultant_ai_prompt.md"
 MAX_UPLOAD_BYTES = 2000 * 1024 * 1024
 
 os.chdir(APP_DIR)
 
 st.set_page_config(
-    page_title="Video Screenshot Document",
+    page_title="Screenshot Document",
     page_icon="logo.jpeg",
     layout="wide",
 )
@@ -41,157 +37,47 @@ st.set_page_config(
 APP_CSS = """
 <style>
   #MainMenu, footer, header { visibility: hidden; }
-  :root {
-    --bg: #07080c;
-    --border: rgba(148, 163, 184, 0.16);
-    --border-strong: rgba(96, 165, 250, 0.38);
-    --text: #f8fafc;
-    --muted: #9ca3af;
-    --muted-strong: #cbd5e1;
-    --blue: #60a5fa;
-    --violet: #8b5cf6;
-    --green: #22c55e;
-    --shadow: 0 22px 70px rgba(0, 0, 0, 0.42);
-  }
-  html, body, [class*="css"] {
-    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  }
   .stApp {
-    background:
-      radial-gradient(circle at 12% 0%, rgba(96, 165, 250, 0.18), transparent 28%),
-      radial-gradient(circle at 88% 4%, rgba(139, 92, 246, 0.16), transparent 30%),
-      linear-gradient(180deg, #0b1020 0%, var(--bg) 42%, #050609 100%);
-    color: var(--text);
+    background: linear-gradient(180deg, #0b1020 0%, #07080c 48%, #050609 100%);
+    color: #f8fafc;
   }
-  .block-container {
-    max-width: 1100px;
-    padding-top: 2.25rem;
-    padding-bottom: 4rem;
-  }
-  .hero-card {
-    background:
-      linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(17, 24, 39, 0.78)),
-      radial-gradient(circle at top right, rgba(96, 165, 250, 0.22), transparent 32%);
-    border: 1px solid var(--border);
-    border-radius: 28px;
-    padding: 2rem 2.25rem;
-    box-shadow: var(--shadow);
-    margin-bottom: 1.25rem;
-  }
-  .hero-card h1 {
-    margin: 0 0 0.5rem;
-    font-size: clamp(2.2rem, 5vw, 3.45rem);
-    line-height: 1;
-    letter-spacing: -0.06em;
-    color: var(--text);
-  }
-  .hero-card p {
-    color: var(--muted-strong);
-    font-size: 1.02rem;
-    line-height: 1.65;
-    margin-bottom: 0;
-    max-width: 760px;
-  }
+  .block-container { max-width: 920px; padding-top: 1.5rem; padding-bottom: 3rem; }
+  h1 { font-size: 2rem; letter-spacing: -0.04em; margin-bottom: 0.25rem; }
+  h2, h3 { letter-spacing: -0.03em; }
   [data-testid="stFileUploader"] section {
-    background: linear-gradient(135deg, rgba(15, 23, 42, 0.84), rgba(30, 41, 59, 0.55));
-    border: 1px dashed rgba(96, 165, 250, 0.56);
-    border-radius: 20px;
-    padding: 1.2rem;
+    border: 1px dashed rgba(96, 165, 250, 0.45);
+    border-radius: 16px;
+    padding: 1rem;
+  }
+  [data-testid="stSlider"] label p,
+  [data-testid="stSlider"] [data-testid="stMarkdownContainer"] p {
+    font-size: 1.2rem !important;
+    font-weight: 600 !important;
+    color: #f1f5f9 !important;
+    line-height: 1.35 !important;
+  }
+  [data-testid="stSlider"] [data-testid="stThumbValue"],
+  [data-testid="stSlider"] [data-testid="stTickBarMin"],
+  [data-testid="stSlider"] [data-testid="stTickBarMax"] {
+    font-size: 1.05rem !important;
+    font-weight: 600 !important;
+  }
+  div[data-baseweb="slider"] { padding-top: 0.6rem; padding-bottom: 1.2rem; }
+  div[data-baseweb="slider"] > div { height: 10px !important; }
+  div[data-baseweb="slider"] [role="slider"] {
+    width: 22px !important;
+    height: 22px !important;
   }
   .stButton > button[kind="primary"],
   .stDownloadButton > button {
-    min-height: 3rem;
-    border-radius: 16px;
-    border: 1px solid rgba(147, 197, 253, 0.28);
-    background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
-    color: white;
-    font-weight: 800;
-    box-shadow: 0 14px 34px rgba(37, 99, 235, 0.28);
+    min-height: 3.1rem;
+    font-size: 1.1rem;
+    font-weight: 700;
+    border-radius: 14px;
   }
-  .shot-card {
-    background: linear-gradient(135deg, rgba(15, 23, 42, 0.82), rgba(17, 24, 39, 0.76));
-    border: 1px solid var(--border);
-    border-radius: 18px;
-    padding: 0.8rem;
-  }
-  .stepper {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 0.6rem;
-    margin: 1rem 0 1.55rem;
-  }
-  .step-card {
-    border: 1px solid var(--border);
-    background: rgba(15, 23, 42, 0.7);
-    border-radius: 999px;
-    padding: 0.72rem 0.9rem;
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-  }
-  .step-card.active { border-color: var(--border-strong); }
-  .step-card.complete {
-    border-color: rgba(34, 197, 94, 0.42);
-    background: rgba(20, 83, 45, 0.24);
-  }
-  .step-number {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.7rem;
-    height: 1.7rem;
-    border-radius: 999px;
-    background: rgba(51, 65, 85, 0.92);
-    font-weight: 800;
-    color: #dbeafe;
-  }
-  .step-card.active .step-number {
-    background: linear-gradient(135deg, var(--blue), var(--violet));
-    color: #fff;
-  }
-  .step-card.complete .step-number { background: var(--green); color: #fff; }
-  .step-title { color: var(--text); font-weight: 800; }
-  [data-testid="stExpander"] {
-    border: 1px solid var(--border);
-    border-radius: 18px;
-    background: rgba(15, 23, 42, 0.58);
-  }
-  hr { border-color: rgba(148, 163, 184, 0.16); margin: 1.6rem 0; }
-  h2, h3, h4 { color: var(--text); letter-spacing: -0.035em; }
-  @media (max-width: 800px) { .stepper { grid-template-columns: 1fr; } }
+  hr { margin: 1.25rem 0; opacity: 0.25; }
 </style>
 """
-
-
-def get_video_duration(path: str) -> float:
-    cap = cv2.VideoCapture(path)
-    if not cap.isOpened():
-        cap.release()
-        return 0.0
-    fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
-    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-    if fps > 0 and frame_count > 0:
-        duration = float(frame_count) / float(fps)
-        cap.release()
-        return duration
-    cap.set(cv2.CAP_PROP_POS_MSEC, 1e9)
-    cap.read()
-    pos_ms = cap.get(cv2.CAP_PROP_POS_MSEC) or 0.0
-    cap.release()
-    return float(pos_ms) / 1000.0 if pos_ms > 0 else 0.0
-
-
-def format_ts(seconds: float) -> str:
-    total = max(0, int(round(seconds)))
-    h, rem = divmod(total, 3600)
-    m, s = divmod(rem, 60)
-    return f"{h:02d}:{m:02d}:{s:02d}"
-
-
-def load_consultant_prompt() -> str:
-    if PROMPT_PATH.is_file():
-        return PROMPT_PATH.read_text(encoding="utf-8")
-    return "Attach the screenshot Word document and transcript, then summarize the walkthrough."
 
 
 def _path_exists(path_value: str) -> bool:
@@ -274,149 +160,50 @@ def ensure_upload_cached(uploaded_file) -> Path | None:
     return cache_path
 
 
-def probe_upload(uploaded_file) -> float | None:
-    if uploaded_file is None:
-        return None
-    suffix = Path(uploaded_file.name).suffix or ".mp4"
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix)
-    os.close(tmp_fd)
-    try:
-        with open(tmp_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        return get_video_duration(tmp_path)
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-
-
-def render_step_indicator(uploaded, result: dict | None, is_processing: bool = False) -> str:
-    if result:
-        states = ["complete", "complete", "complete"]
-    elif is_processing:
-        states = ["complete", "active", "pending"]
-    elif uploaded is not None:
-        states = ["complete", "active", "pending"]
-    else:
-        states = ["active", "pending", "pending"]
-
-    titles = ["Upload", "Generate", "Download"]
-    cards = []
-    for idx, (title, state) in enumerate(zip(titles, states), start=1):
-        cards.append(
-            '<div class="step-card {state}">'
-            '<div class="step-number">{idx}</div>'
-            '<div class="step-title">{title}</div>'
-            "</div>".format(state=state, idx=idx, title=html.escape(title))
-        )
-    return f'<div class="stepper">{"".join(cards)}</div>'
-
-
-def render_transcript_preview(transcript_text: str) -> None:
-    with st.expander("Preview Transcript", expanded=False):
-        if transcript_text:
-            st.text_area(
-                "Transcript text",
-                value=transcript_text,
-                height=200,
-                disabled=True,
-                label_visibility="collapsed",
-            )
-        else:
-            st.info("No transcript text was produced. The video may not contain speech or readable audio.")
-
-
-def render_copy_prompt_button(prompt_text: str) -> None:
-    prompt_payload = json.dumps(prompt_text)
-    component_html = """
-    <style>
-      body { margin: 0; font-family: Inter, sans-serif; background: transparent; color: #f4f4f5; }
-      button {
-        min-height: 46px; border: 0; border-radius: 13px; color: white; cursor: pointer;
-        font-weight: 800; padding: 0.8rem 1rem; width: 100%;
-        background: linear-gradient(135deg, #2563eb, #7c3aed);
-        box-shadow: 0 12px 28px rgba(0,0,0,0.22);
-      }
-      #toast { color: #bbf7d0; min-height: 1.3rem; margin-top: 0.55rem; font-size: 0.9rem; }
-    </style>
-    <button onclick="copyPrompt()">📋 Copy Prompt</button>
-    <div id="toast" aria-live="polite"></div>
-    <script>
-      const promptText = __PROMPT_JSON__;
-      const toast = document.getElementById("toast");
-      async function copyPrompt() {
-        try {
-          if (navigator.clipboard && window.isSecureContext) {
-            await navigator.clipboard.writeText(promptText);
-          } else {
-            const t = document.createElement("textarea");
-            t.value = promptText; t.style.position = "fixed"; t.style.opacity = "0";
-            document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove();
-          }
-          toast.textContent = "Prompt copied.";
-        } catch (e) { toast.textContent = "Copy failed."; }
-      }
-    </script>
-    """.replace("__PROMPT_JSON__", prompt_payload)
-    components.html(component_html, height=92)
-
-
 def run_app() -> None:
     st.markdown(APP_CSS, unsafe_allow_html=True)
     restore_last_result()
-    consultant_prompt = load_consultant_prompt()
 
-    st.markdown(
-        """
-        <div class="hero-card">
-          <h1>Recording Analyzer</h1>
-          <p>
-            Upload a screen recording, optionally crop the frame, detect meaningful visual changes,
-            and download a Word document with timestamped screenshots and transcript text.
-          </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.title("Screenshot Document")
 
-    step_placeholder = st.empty()
-
-    st.subheader("Step 1: Upload your video")
     uploaded = st.file_uploader(
-        "Upload a video file",
+        "Video",
         type=["mp4", "mov", "m4v", "avi", "mkv", "webm"],
+        label_visibility="collapsed",
     )
-    st.divider()
 
-    st.subheader("Step 2: Configure & Generate")
+    over_size = uploaded is not None and uploaded.size > MAX_UPLOAD_BYTES
+    if over_size:
+        st.error("Max file size is 2 GB.")
+
     change_threshold = st.slider(
-        "Screenshot sensitivity — Higher = fewer screenshots · Lower = more screenshots",
+        "Sensitivity — higher = fewer screenshots",
         min_value=1.0,
         max_value=40.0,
         value=10.0,
         step=0.5,
-        help="Adjusts how much the screen must change before a screenshot is captured.",
     )
-    st.caption(f"Current sensitivity threshold: {change_threshold:.1f}% changed area")
+    min_gap = st.slider(
+        "Minimum seconds between screenshots",
+        min_value=1.0,
+        max_value=15.0,
+        value=3.0,
+        step=0.5,
+    )
+    sample_interval = st.slider(
+        "Check every (seconds)",
+        min_value=0.25,
+        max_value=2.0,
+        value=0.5,
+        step=0.25,
+    )
 
-    over_size = uploaded is not None and uploaded.size > MAX_UPLOAD_BYTES
-    duration = probe_upload(uploaded) if uploaded is not None and not over_size else None
-
-    if over_size:
-        st.error("File exceeds the 2 GB upload limit. Compress the video and try again.")
-    elif uploaded is not None and duration is not None:
-        st.success(
-            f"{html.escape(uploaded.name)} is ready: {format_ts(duration)} long, "
-            f"{uploaded.size / (1024 * 1024):.1f} MB."
-        )
+    cache_path = None
+    if uploaded is not None and not over_size:
         cache_path = ensure_upload_cached(uploaded)
         if cache_path is not None:
             crop_margins = render_video_crop_ui(cache_path)
             st.session_state["crop_margins_for_pipeline"] = crop_margins
-        else:
-            st.warning("Could not read a preview frame from the video. Screenshots will use the full frame.")
-            reset_crop_margins()
 
     run = st.button(
         "Generate",
@@ -425,16 +212,10 @@ def run_app() -> None:
         disabled=uploaded is None or over_size,
     )
 
-    existing_result = st.session_state.get("last_result")
-    step_placeholder.markdown(
-        render_step_indicator(uploaded, existing_result, run and uploaded is not None),
-        unsafe_allow_html=True,
-    )
-
     if run and uploaded is not None:
         cache_path = ensure_upload_cached(uploaded)
         if cache_path is None or not cache_path.is_file():
-            st.error("Could not cache the uploaded video.")
+            st.error("Could not read the uploaded video.")
             return
 
         crop_margins = get_crop_margins()
@@ -446,50 +227,33 @@ def run_app() -> None:
 
         def on_progress(message: str, percent: int) -> None:
             progress.progress(max(0, min(100, percent)))
-            progress_text.markdown(f"**{html.escape(message)}** · {percent}%")
+            progress_text.markdown(f"{html.escape(message)} · {percent}%")
 
         try:
-            with st.status("Processing video...", expanded=True) as status:
+            with st.status("Processing…", expanded=False) as status:
                 result = run_screenshot_pipeline(
                     str(cache_path),
                     filename=uploaded.name,
                     change_threshold=change_threshold,
+                    min_gap=min_gap,
+                    sample_interval=sample_interval,
                     crop_left_pct=crop_margins["left"],
                     crop_right_pct=crop_margins["right"],
                     crop_top_pct=crop_margins["top"],
                     crop_bottom_pct=crop_margins["bottom"],
                     on_progress=on_progress,
                 )
-                status.update(label="Outputs ready", state="complete")
-
+                status.update(label="Done", state="complete")
             st.session_state["last_result"] = result
             save_last_result(result)
+            progress.empty()
+            progress_text.empty()
         except Exception as exc:
-            st.error(f"Processing failed: {exc}")
+            st.error(f"Failed: {exc}")
 
     result = st.session_state.get("last_result")
-    step_placeholder.markdown(
-        render_step_indicator(uploaded, result, False),
-        unsafe_allow_html=True,
-    )
+    docx_path = get_result_doc_path(result) if result else None
 
-    if result and st.button("Start over / clear current result", use_container_width=True):
-        clear_current_result()
-        st.rerun()
-
-    if not result:
-        st.info(
-            "The first frame is always included. Later frames are kept only when the screen "
-            "changes enough to pass the threshold."
-        )
-        return
-
-    st.divider()
-    docx_path = get_result_doc_path(result)
-    transcript = result.get("transcript") or {}
-    transcript_text = str(transcript.get("text") or "")
-
-    st.subheader("Step 3: Download")
     if docx_path and docx_path.is_file():
         st.download_button(
             "Download Word Document",
@@ -499,10 +263,9 @@ def run_app() -> None:
             use_container_width=True,
         )
 
-    render_transcript_preview(transcript_text)
-    st.markdown("#### Copy Prompt")
-    render_copy_prompt_button(consultant_prompt)
-    st.caption("Paste this into your AI model along with the Word document.")
+    if result and st.button("Clear", use_container_width=True):
+        clear_current_result()
+        st.rerun()
 
 
 if __name__ == "__main__":

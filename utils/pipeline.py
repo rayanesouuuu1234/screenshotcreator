@@ -12,10 +12,10 @@ from utils.scene_detector import detect_scenes
 from utils.transcriber import transcribe_video
 
 ProgressCb = Callable[[str, int], None] | None
-CONSULTANT_PROMPT_PATH = Path("consultant_ai_prompt.md")
 
 DEFAULT_MIN_GAP = 3.0
-DEFAULT_SAMPLE_INTERVAL = 1.0
+DEFAULT_SAMPLE_INTERVAL = 0.5
+DEFAULT_MAX_SCREENSHOTS = 80
 DEFAULT_WHISPER_MODEL = "base"
 
 
@@ -34,17 +34,13 @@ def _filter_visually_empty_screenshots(screenshots: list[dict]) -> tuple[list[di
     return kept, skipped
 
 
-def _load_ai_instructions() -> str:
-    if CONSULTANT_PROMPT_PATH.is_file():
-        return CONSULTANT_PROMPT_PATH.read_text(encoding="utf-8")
-    return ""
-
-
 def run_screenshot_pipeline(
     video_path: str,
     *,
     filename: str,
     change_threshold: float,
+    min_gap: float = DEFAULT_MIN_GAP,
+    sample_interval: float = DEFAULT_SAMPLE_INTERVAL,
     crop_left_pct: float = 0.0,
     crop_right_pct: float = 0.0,
     crop_top_pct: float = 0.0,
@@ -57,12 +53,13 @@ def run_screenshot_pipeline(
         if on_progress:
             on_progress(message, percent)
 
-    progress("Detecting meaningful screen changes", 1)
+    progress("Detecting screen changes", 1)
     screenshots = detect_scenes(
         video_path,
         change_threshold=change_threshold,
-        min_gap=DEFAULT_MIN_GAP,
-        sample_interval=DEFAULT_SAMPLE_INTERVAL,
+        min_gap=min_gap,
+        sample_interval=sample_interval,
+        max_screenshots=DEFAULT_MAX_SCREENSHOTS,
         crop_left_pct=crop_left_pct,
         crop_right_pct=crop_right_pct,
         crop_top_pct=crop_top_pct,
@@ -71,9 +68,8 @@ def run_screenshot_pipeline(
     )
 
     screenshots, skipped_empty_frames = _filter_visually_empty_screenshots(screenshots)
-    print(f"Skipped {skipped_empty_frames} visually empty frame(s) before document assembly.")
 
-    progress("Transcribing with faster-whisper", 58)
+    progress("Transcribing", 58)
     transcript = transcribe_video(
         video_path,
         model_size=DEFAULT_WHISPER_MODEL,
@@ -81,20 +77,22 @@ def run_screenshot_pipeline(
         on_progress=lambda message, pct: progress(message, 58 + int(pct * 0.34)),
     )
 
-    progress("Generating Word document", 94)
+    transcript_text = str(transcript.get("text") or "")
+
+    progress("Building document", 94)
     docx_path = create_screenshots_docx(
         screenshots,
         video_filename=filename,
-        transcript_segments=transcript.get("segments") or [],
-        ai_instructions=_load_ai_instructions(),
+        transcript_text=transcript_text,
     )
 
     result: dict[str, Any] = {
         "filename": filename,
         "settings": {
             "change_threshold": float(change_threshold),
-            "min_gap": DEFAULT_MIN_GAP,
-            "sample_interval": DEFAULT_SAMPLE_INTERVAL,
+            "min_gap": float(min_gap),
+            "sample_interval": float(sample_interval),
+            "max_screenshots": DEFAULT_MAX_SCREENSHOTS,
             "crop_left_pct": float(crop_left_pct),
             "crop_right_pct": float(crop_right_pct),
             "crop_top_pct": float(crop_top_pct),

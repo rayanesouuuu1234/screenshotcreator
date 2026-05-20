@@ -91,9 +91,7 @@ def render_video_crop_ui(cache_path: Path) -> dict[str, float]:
 
     header_col, reset_col = st.columns([5, 1])
     with header_col:
-        st.caption(
-            "Optional — drag the handles to trim edges, or leave unchanged and click Generate."
-        )
+        st.caption("Optional crop — drag handles, or Reset for full frame.")
     with reset_col:
         if st.button("Reset", help="Use the full frame", use_container_width=True):
             reset_crop_margins()

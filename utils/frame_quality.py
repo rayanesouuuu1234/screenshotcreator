@@ -11,6 +11,8 @@ from PIL import Image, ImageStat
 
 MIN_FRAME_BRIGHTNESS = 15.0
 MIN_FRAME_VARIANCE = 100.0
+WHITE_BLANK_BRIGHTNESS = 240.0
+WHITE_BLANK_MAX_VARIANCE = 150.0
 DEFAULT_PREVIEW_SCAN_SECONDS = 45.0
 
 
@@ -27,7 +29,13 @@ def is_black_frame_bgr(frame: np.ndarray) -> bool:
 
 def is_visually_empty_bgr(frame: np.ndarray) -> bool:
     mean_brightness, pixel_variance = frame_stats_bgr(frame)
-    return mean_brightness < MIN_FRAME_BRIGHTNESS or pixel_variance < MIN_FRAME_VARIANCE
+    if mean_brightness < MIN_FRAME_BRIGHTNESS:
+        return True
+    if pixel_variance < MIN_FRAME_VARIANCE:
+        return True
+    if mean_brightness >= WHITE_BLANK_BRIGHTNESS and pixel_variance < WHITE_BLANK_MAX_VARIANCE:
+        return True
+    return False
 
 
 def is_visually_empty_image(image_path: str | Path) -> bool:
@@ -36,7 +44,13 @@ def is_visually_empty_image(image_path: str | Path) -> bool:
         stats = ImageStat.Stat(grayscale)
     mean_brightness = float(stats.mean[0])
     pixel_variance = float(stats.var[0])
-    return mean_brightness < MIN_FRAME_BRIGHTNESS or pixel_variance < MIN_FRAME_VARIANCE
+    if mean_brightness < MIN_FRAME_BRIGHTNESS:
+        return True
+    if pixel_variance < MIN_FRAME_VARIANCE:
+        return True
+    if mean_brightness >= WHITE_BLANK_BRIGHTNESS and pixel_variance < WHITE_BLANK_MAX_VARIANCE:
+        return True
+    return False
 
 
 def _encode_frame_jpeg_base64(frame: np.ndarray) -> tuple[str, int, int] | None:

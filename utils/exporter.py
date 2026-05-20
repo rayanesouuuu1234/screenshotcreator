@@ -1,4 +1,4 @@
-"""Word document export for chronological screenshots."""
+"""Word document export: large screenshots + paginated transcript."""
 
 from __future__ import annotations
 
@@ -9,11 +9,19 @@ from pathlib import Path
 from docx import Document
 from docx.enum.text import WD_LINE_SPACING
 from docx.shared import Inches, Pt, RGBColor
+from PIL import Image
 
 OUTPUT_DIR = Path("outputs")
-PAGE_IMAGE_WIDTH = Inches(6.5)
-TRANSCRIPT_FONT_SIZE = Pt(10)
-LABEL_FONT_SIZE = Pt(14)
+
+# US Letter with tight margins — maximize content for AI readability
+PAGE_MARGIN = Inches(0.45)
+PAGE_IMAGE_MAX_WIDTH = Inches(7.6)
+PAGE_IMAGE_MAX_HEIGHT = Inches(9.2)
+TIMESTAMP_FONT_SIZE = Pt(9)
+TRANSCRIPT_HEADING_SIZE = Pt(10)
+TRANSCRIPT_FONT_SIZE = Pt(8)
+TRANSCRIPT_LINES_PER_PAGE = 56
+TRANSCRIPT_CHARS_PER_LINE = 105
 
 
 def _safe_stem(filename: str) -> str:
@@ -26,62 +34,70 @@ def default_docx_name(video_filename: str) -> str:
     return f"{_safe_stem(video_filename)}_{date.today().isoformat()}.docx"
 
 
-def _segment_text(segment: dict) -> str:
-    return str(segment.get("text", "")).strip()
+def _set_page_margins(doc: Document) -> None:
+    for section in doc.sections:
+        section.top_margin = PAGE_MARGIN
+        section.bottom_margin = PAGE_MARGIN
+        section.left_margin = PAGE_MARGIN
+        section.right_margin = PAGE_MARGIN
 
 
-def _segments_for_window(segments: list[dict], start: float, end: float | None) -> list[str]:
-    lines: list[str] = []
-    for segment in segments:
-        text = _segment_text(segment)
-        if not text:
-            continue
-        segment_start = float(segment.get("start", 0.0) or 0.0)
-        if segment_start < start:
-            continue
-        if end is not None and segment_start >= end:
-            continue
-        lines.append(text)
-    return lines
+def _image_display_width(image_path: Path) -> Inches:
+    with Image.open(image_path) as img:
+        width_px, height_px = img.size
+    if width_px <= 0 or height_px <= 0:
+        return PAGE_IMAGE_MAX_WIDTH
+
+    max_w = PAGE_IMAGE_MAX_WIDTH.inches
+    max_h = PAGE_IMAGE_MAX_HEIGHT.inches
+    aspect = width_px / height_px
+    display_w = max_w
+    display_h = display_w / aspect
+    if display_h > max_h:
+        display_w = max_h * aspect
+    return Inches(display_w)
 
 
-def _add_horizontal_rule(doc: Document) -> None:
-    paragraph = doc.add_paragraph()
-    run = paragraph.add_run("─" * 72)
-    run.font.color.rgb = RGBColor(221, 221, 221)
+def _estimate_line_units(text: str) -> int:
+    if not text:
+        return 0
+    return max(1, (len(text) + TRANSCRIPT_CHARS_PER_LINE - 1) // TRANSCRIPT_CHARS_PER_LINE)
 
 
-def _add_transcript_block(doc: Document, lines: list[str]) -> None:
-    if not lines:
-        return
-    _add_horizontal_rule(doc)
+def _add_transcript_paragraph(doc: Document, text: str) -> None:
     paragraph = doc.add_paragraph()
     paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
-    paragraph.paragraph_format.space_after = Pt(10)
-    run = paragraph.add_run("\n".join(lines))
-    run.italic = True
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.space_after = Pt(1)
+    run = paragraph.add_run(text)
     run.font.size = TRANSCRIPT_FONT_SIZE
-    run.font.color.rgb = RGBColor(102, 102, 102)
-    _add_horizontal_rule(doc)
+    run.font.color.rgb = RGBColor(30, 30, 30)
 
 
-def _add_ai_instructions(doc: Document, ai_instructions: str) -> None:
-    instructions = ai_instructions.strip()
-    if not instructions:
+def _add_paginated_transcript(doc: Document, transcript_text: str) -> None:
+    text = transcript_text.strip()
+    if not text:
         return
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return
+
     doc.add_page_break()
-    heading = doc.add_heading("AI Instructions for Functional Design Document", level=1)
-    heading.runs[0].font.size = Pt(20)
-    for paragraph_text in instructions.splitlines():
-        text = paragraph_text.strip()
-        if not text:
-            doc.add_paragraph()
-            continue
-        paragraph = doc.add_paragraph(text)
-        paragraph.paragraph_format.space_after = Pt(6)
-        if paragraph.runs:
-            paragraph.runs[0].font.size = Pt(11)
-            paragraph.runs[0].font.color.rgb = RGBColor(68, 68, 68)
+    heading = doc.add_heading("Transcript", level=1)
+    if heading.runs:
+        heading.runs[0].font.size = TRANSCRIPT_HEADING_SIZE
+
+    used_on_page = 0
+
+    for line in lines:
+        units = _estimate_line_units(line)
+        if used_on_page > 0 and used_on_page + units > TRANSCRIPT_LINES_PER_PAGE:
+            doc.add_page_break()
+            used_on_page = 0
+
+        _add_transcript_paragraph(doc, line)
+        used_on_page += units
 
 
 def create_screenshots_docx(
@@ -89,10 +105,9 @@ def create_screenshots_docx(
     *,
     video_filename: str,
     output_path: str | Path | None = None,
-    transcript_segments: list[dict] | None = None,
-    ai_instructions: str = "",
+    transcript_text: str = "",
 ) -> Path:
-    """Create a Word document with timestamped screenshots and paired transcript text."""
+    """Create a Word document with full-page screenshots and a paginated transcript appendix."""
     if not screenshots:
         raise ValueError("No screenshots were generated, so a document cannot be created.")
 
@@ -100,7 +115,7 @@ def create_screenshots_docx(
     out = Path(output_path) if output_path else OUTPUT_DIR / default_docx_name(video_filename)
 
     doc = Document()
-    transcript_segments = transcript_segments or []
+    _set_page_margins(doc)
     rendered = 0
 
     for index, shot in enumerate(screenshots, start=1):
@@ -108,36 +123,28 @@ def create_screenshots_docx(
         if not image_path.is_file():
             continue
 
+        if rendered > 0:
+            doc.add_page_break()
+
+        doc.add_picture(str(image_path), width=_image_display_width(image_path))
+
         label = str(shot.get("label", "00:00:00"))
-        heading = doc.add_heading(f"{index}. {label}", level=2)
-        if heading.runs:
-            heading.runs[0].font.size = LABEL_FONT_SIZE
-
-        doc.add_picture(str(image_path), width=PAGE_IMAGE_WIDTH)
-
-        screenshot_start = float(shot.get("timestamp", 0.0) or 0.0)
-        next_timestamp = None
-        if index < len(screenshots):
-            next_timestamp = float(
-                screenshots[index].get("timestamp", screenshot_start) or screenshot_start
-            )
-
-        transcript_lines = _segments_for_window(
-            transcript_segments,
-            screenshot_start,
-            next_timestamp,
-        )
-        _add_transcript_block(doc, transcript_lines)
+        ts = doc.add_paragraph()
+        ts.paragraph_format.space_before = Pt(2)
+        ts.paragraph_format.space_after = Pt(0)
+        run = ts.add_run(label)
+        run.font.size = TIMESTAMP_FONT_SIZE
+        run.font.color.rgb = RGBColor(60, 60, 60)
+        run.bold = True
         rendered += 1
 
     if rendered == 0:
         raise ValueError("None of the generated screenshot files could be read.")
 
-    _add_ai_instructions(doc, ai_instructions)
+    _add_paginated_transcript(doc, transcript_text)
     doc.save(out)
     return out
 
 
-# Backward-compatible alias while older code paths may still import the PDF helper name.
 create_screenshots_pdf = create_screenshots_docx
 _default_pdf_name = default_docx_name

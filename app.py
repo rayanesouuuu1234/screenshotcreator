@@ -68,12 +68,91 @@ APP_CSS = """
     width: 22px !important;
     height: 22px !important;
   }
+  [data-testid="stNumberInput"] label p {
+    font-size: 0.95rem !important;
+    font-weight: 600 !important;
+    color: #cbd5e1 !important;
+  }
+  [data-testid="stNumberInput"] input {
+    font-size: 1.1rem !important;
+    font-weight: 700 !important;
+    text-align: center;
+    min-height: 2.6rem;
+    background-color: #1e293b !important;
+    color: #f8fafc !important;
+    border: 1px solid #64748b !important;
+    border-radius: 10px !important;
+  }
+  [data-testid="stNumberInput"] button {
+    background-color: #334155 !important;
+    color: #f8fafc !important;
+    border-color: #64748b !important;
+  }
+  /* Primary Generate — force dark blue (Streamlit theme overrides otherwise) */
   .stButton > button[kind="primary"],
+  .stButton > button[data-testid="stBaseButton-primary"],
+  button[data-testid="stBaseButton-primary"],
+  [data-testid="stButton"] button[kind="primary"] {
+    min-height: 3.1rem;
+    font-size: 1.1rem;
+    font-weight: 700;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%) !important;
+    background-color: #1e3a8a !important;
+    color: #ffffff !important;
+    border: 1px solid #3b82f6 !important;
+    box-shadow: 0 4px 14px rgba(30, 64, 175, 0.45);
+  }
+  .stButton > button[kind="primary"]:hover,
+  button[data-testid="stBaseButton-primary"]:hover {
+    background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%) !important;
+    background-color: #1e40af !important;
+    color: #ffffff !important;
+    border-color: #60a5fa !important;
+  }
+  .stButton > button[kind="primary"]:disabled,
+  button[data-testid="stBaseButton-primary"]:disabled {
+    background: #334155 !important;
+    background-color: #334155 !important;
+    color: #94a3b8 !important;
+    border-color: #475569 !important;
+    box-shadow: none;
+  }
+  .stButton > button[kind="secondary"],
+  .stButton > button:not([kind="primary"]) {
+    background-color: #1e293b !important;
+    color: #e2e8f0 !important;
+    border: 1px solid #475569 !important;
+    border-radius: 12px;
+  }
   .stDownloadButton > button {
     min-height: 3.1rem;
     font-size: 1.1rem;
     font-weight: 700;
     border-radius: 14px;
+    background: linear-gradient(135deg, #0f766e 0%, #115e59 100%) !important;
+    background-color: #0f766e !important;
+    color: #ffffff !important;
+    border: 1px solid #14b8a6 !important;
+  }
+  [data-testid="stMetricLabel"] {
+    font-size: 0.85rem !important;
+    color: #94a3b8 !important;
+  }
+  [data-testid="stMetricValue"] {
+    font-size: 1.35rem !important;
+    font-weight: 700 !important;
+    color: #f1f5f9 !important;
+  }
+  [data-testid="stCaptionContainer"] p {
+    color: #94a3b8 !important;
+    font-size: 0.95rem !important;
+  }
+  div[data-testid="stVerticalBlockBorderWrapper"] {
+    border-color: rgba(96, 165, 250, 0.35) !important;
+    background: rgba(15, 23, 42, 0.55) !important;
+    border-radius: 16px !important;
+    padding: 0.25rem 0.5rem 0.75rem !important;
   }
   hr { margin: 1.25rem 0; opacity: 0.25; }
 </style>
@@ -174,7 +253,7 @@ def run_app() -> None:
 
     over_size = uploaded is not None and uploaded.size > MAX_UPLOAD_BYTES
     if over_size:
-        st.error("Max file size is 2 GB.")
+        st.error("Max file size is 200 MB.")
 
     change_threshold = st.slider(
         "Sensitivity — higher = fewer screenshots",
@@ -252,14 +331,14 @@ def run_app() -> None:
             st.error(f"Failed: {exc}")
 
     result = st.session_state.get("last_result")
-    docx_path = get_result_doc_path(result) if result else None
+    pdf_path = get_result_doc_path(result) if result else None
 
-    if docx_path and docx_path.is_file():
+    if pdf_path and pdf_path.is_file():
         st.download_button(
-            "Download Word Document",
-            data=docx_path.read_bytes(),
-            file_name=docx_path.name,
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "Download PDF",
+            data=pdf_path.read_bytes(),
+            file_name=pdf_path.name,
+            mime="application/pdf",
             use_container_width=True,
         )
 

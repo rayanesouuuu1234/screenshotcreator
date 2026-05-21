@@ -12,7 +12,13 @@ from utils.crop import load_preview_frame_bgr
 
 DEFAULT_CROP = {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
 MAX_TRIM_PCT = 45.0
-PREVIEW_MAX_WIDTH = 920
+
+TRIM_LABELS = {
+    "left": "Left edge",
+    "right": "Right edge",
+    "top": "Top edge",
+    "bottom": "Bottom edge",
+}
 
 
 def normalize_crop_pct(value: dict | None) -> dict[str, float]:
@@ -47,6 +53,12 @@ def get_crop_margins() -> dict[str, float]:
 
 def reset_crop_margins() -> None:
     set_crop_margins(dict(DEFAULT_CROP))
+    cache_key = str(st.session_state.get("upload_cache_key", ""))
+    for side in DEFAULT_CROP:
+        for prefix in ("crop_sl_", "crop_num_", "crop_trim_"):
+            key = f"{prefix}{side}_{cache_key}"
+            st.session_state.pop(key, None)
+        st.session_state[f"crop_margin_{side}"] = 0.0
 
 
 def _crop_pixels(
@@ -69,37 +81,75 @@ def draw_crop_preview(frame_bgr: np.ndarray, margins: dict[str, float]) -> np.nd
     left, top, right, bottom = _crop_pixels(frame_h, frame_w, margins)
 
     rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    dimmed = (rgb.astype(np.float32) * 0.32).astype(np.uint8)
+    dimmed = (rgb.astype(np.float32) * 0.28).astype(np.uint8)
     preview = dimmed.copy()
     preview[top:bottom, left:right] = rgb[top:bottom, left:right]
-    cv2.rectangle(preview, (left, top), (right - 1, bottom - 1), (56, 189, 248), 2)
+    cv2.rectangle(preview, (left, top), (right - 1, bottom - 1), (56, 189, 248), 3)
     return preview
 
 
-def _render_margin_sliders(cache_key: str) -> dict[str, float]:
-    margins = get_crop_margins()
-    sides = (
-        ("left", "Trim left"),
-        ("right", "Trim right"),
-        ("top", "Trim top"),
-        ("bottom", "Trim bottom"),
+def _clamp_trim(value: float) -> float:
+    return max(0.0, min(MAX_TRIM_PCT, float(value)))
+
+
+def _render_trim_control(side: str, label: str, cache_key: str) -> float:
+    """Label + typed % + slider; crop_margin_* is the source of truth."""
+    state_key = f"crop_margin_{side}"
+    slider_key = f"crop_sl_{side}_{cache_key}"
+    number_key = f"crop_num_{side}_{cache_key}"
+
+    margin = _clamp_trim(st.session_state.get(state_key, 0.0))
+    st.session_state[state_key] = margin
+    st.session_state[slider_key] = margin
+    st.session_state[number_key] = margin
+
+    def sync_from_slider() -> None:
+        st.session_state[state_key] = _clamp_trim(st.session_state[slider_key])
+
+    def sync_from_number() -> None:
+        st.session_state[state_key] = _clamp_trim(st.session_state[number_key])
+
+    title_col, value_col = st.columns([2, 1])
+    with title_col:
+        st.markdown(f"**{label}**")
+        st.caption("Percent to cut from this edge")
+    with value_col:
+        st.number_input(
+            "Percent",
+            min_value=0.0,
+            max_value=MAX_TRIM_PCT,
+            step=0.5,
+            format="%.1f",
+            key=number_key,
+            on_change=sync_from_number,
+        )
+
+    st.slider(
+        label,
+        min_value=0.0,
+        max_value=MAX_TRIM_PCT,
+        step=0.5,
+        format="%.1f%%",
+        key=slider_key,
+        label_visibility="collapsed",
+        on_change=sync_from_slider,
     )
 
-    row1, row2 = st.columns(2), st.columns(2)
-    updated = dict(margins)
+    return float(st.session_state[state_key])
 
-    for col, (side, label) in zip((row1[0], row1[1], row2[0], row2[1]), sides):
+
+def _render_margin_controls(cache_key: str) -> dict[str, float]:
+    updated: dict[str, float] = {}
+
+    row_top = st.columns(2, gap="large")
+    for col, side in zip(row_top, ("top", "bottom")):
         with col:
-            value = st.slider(
-                label,
-                min_value=0.0,
-                max_value=MAX_TRIM_PCT,
-                value=float(margins.get(side, 0.0)),
-                step=0.5,
-                format="%.1f%%",
-                key=f"crop_trim_{side}_{cache_key}",
-            )
-            updated[side] = value
+            updated[side] = _render_trim_control(side, TRIM_LABELS[side], cache_key)
+
+    row_sides = st.columns(2, gap="large")
+    for col, side in zip(row_sides, ("left", "right")):
+        with col:
+            updated[side] = _render_trim_control(side, TRIM_LABELS[side], cache_key)
 
     set_crop_margins(updated)
     return get_crop_margins()
@@ -124,22 +174,35 @@ def render_video_crop_ui(cache_path: Path) -> dict[str, float]:
         reset_crop_margins()
         return get_crop_margins()
 
-    header_col, reset_col = st.columns([5, 1])
-    with header_col:
-        st.caption("Optional crop — adjust trim sliders; bright area is kept.")
-    with reset_col:
-        if st.button("Reset", help="Use the full frame", use_container_width=True):
-            reset_crop_margins()
-            st.rerun()
+    with st.container(border=True):
+        head, reset_col = st.columns([4, 1])
+        with head:
+            st.markdown("### Crop frame (optional)")
+            st.markdown(
+                "Bright area is kept. Adjust **Top/Bottom** and **Left/Right** — "
+                "use the slider or type a number in the box."
+            )
+        with reset_col:
+            st.markdown("<div style='height:1.6rem'></div>", unsafe_allow_html=True)
+            if st.button("Reset crop", help="Use the full frame", use_container_width=True):
+                reset_crop_margins()
+                st.rerun()
 
-    margins = _render_margin_sliders(cache_key)
-    preview_rgb = draw_crop_preview(frame, margins)
-    st.image(preview_rgb, use_container_width=True, channels="RGB")
+        margins = get_crop_margins()
+        preview_rgb = draw_crop_preview(frame, margins)
+        st.image(preview_rgb, use_container_width=True, channels="RGB")
 
-    frame_h, frame_w = frame.shape[:2]
-    left, top, right, bottom = _crop_pixels(frame_h, frame_w, margins)
-    crop_w = right - left
-    crop_h = bottom - top
-    st.caption(f"Export region: {crop_w}×{crop_h} px ({100 * crop_w / frame_w:.0f}% × {100 * crop_h / frame_h:.0f}% of frame)")
+        frame_h, frame_w = frame.shape[:2]
+        left, top, right, bottom = _crop_pixels(frame_h, frame_w, margins)
+        crop_w = right - left
+        crop_h = bottom - top
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Width kept", f"{crop_w} px")
+        m2.metric("Height kept", f"{crop_h} px")
+        m3.metric("Width", f"{100 * crop_w / frame_w:.0f}%")
+        m4.metric("Height", f"{100 * crop_h / frame_h:.0f}%")
+
+        st.divider()
+        margins = _render_margin_controls(cache_key)
 
     return margins

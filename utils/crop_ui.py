@@ -155,32 +155,7 @@ def _render_margin_controls(cache_key: str) -> dict[str, float]:
     return get_crop_margins()
 
 
-def _render_crop_body(frame: np.ndarray, cache_key: str) -> dict[str, float]:
-    reset_col, _ = st.columns([1, 3])
-    with reset_col:
-        if st.button("Reset crop", help="Use the full frame", use_container_width=True):
-            reset_crop_margins()
-            st.rerun()
-
-    margins = get_crop_margins()
-    preview_rgb = draw_crop_preview(frame, margins)
-    st.image(preview_rgb, use_container_width=True, channels="RGB")
-
-    frame_h, frame_w = frame.shape[:2]
-    left, top, right, bottom = _crop_pixels(frame_h, frame_w, margins)
-    crop_w = right - left
-    crop_h = bottom - top
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Width kept", f"{crop_w} px")
-    m2.metric("Height kept", f"{crop_h} px")
-    m3.metric("Width", f"{100 * crop_w / frame_w:.0f}%")
-    m4.metric("Height", f"{100 * crop_h / frame_h:.0f}%")
-
-    st.divider()
-    return _render_margin_controls(cache_key)
-
-
-def render_video_crop_ui(cache_path: Path, *, bordered: bool = True) -> dict[str, float]:
+def render_video_crop_ui(cache_path: Path) -> dict[str, float]:
     """Crop via margin sliders and a live preview; same % semantics as the pipeline."""
     cache_key = st.session_state.get("upload_cache_key", "")
     preview_key = f"crop_preview::{cache_key}"
@@ -199,15 +174,35 @@ def render_video_crop_ui(cache_path: Path, *, bordered: bool = True) -> dict[str
         reset_crop_margins()
         return get_crop_margins()
 
-    if bordered:
-        with st.container(border=True):
-            st.markdown("### Trim frame edges (optional)")
-            st.caption(
-                "Bright area is kept. Adjust top/bottom and left/right — "
-                "use the slider or type a percent."
+    with st.container(border=True):
+        head, reset_col = st.columns([4, 1])
+        with head:
+            st.markdown("### Crop frame (optional)")
+            st.markdown(
+                "Bright area is kept. Adjust **Top/Bottom** and **Left/Right** — "
+                "use the slider or type a number in the box."
             )
-            margins = _render_crop_body(frame, cache_key)
-    else:
-        margins = _render_crop_body(frame, cache_key)
+        with reset_col:
+            st.markdown("<div style='height:1.6rem'></div>", unsafe_allow_html=True)
+            if st.button("Reset crop", help="Use the full frame", use_container_width=True):
+                reset_crop_margins()
+                st.rerun()
+
+        margins = get_crop_margins()
+        preview_rgb = draw_crop_preview(frame, margins)
+        st.image(preview_rgb, use_container_width=True, channels="RGB")
+
+        frame_h, frame_w = frame.shape[:2]
+        left, top, right, bottom = _crop_pixels(frame_h, frame_w, margins)
+        crop_w = right - left
+        crop_h = bottom - top
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Width kept", f"{crop_w} px")
+        m2.metric("Height kept", f"{crop_h} px")
+        m3.metric("Width", f"{100 * crop_w / frame_w:.0f}%")
+        m4.metric("Height", f"{100 * crop_h / frame_h:.0f}%")
+
+        st.divider()
+        margins = _render_margin_controls(cache_key)
 
     return margins

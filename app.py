@@ -11,11 +11,13 @@ from pathlib import Path
 
 import streamlit as st
 
-from utils.crop_ui import get_crop_margins, render_video_crop_ui, reset_crop_margins
+from utils.crop_ui import get_crop_margins, reset_crop_margins
 
+import utils.exporter as exporter_module
 import utils.pipeline as pipeline_module
 import utils.scene_detector as scene_detector_module
 
+exporter_module = importlib.reload(exporter_module)
 scene_detector_module = importlib.reload(scene_detector_module)
 pipeline_module = importlib.reload(pipeline_module)
 run_screenshot_pipeline = pipeline_module.run_screenshot_pipeline
@@ -255,34 +257,10 @@ def run_app() -> None:
     if over_size:
         st.error("Max file size is 200 MB.")
 
-    change_threshold = st.slider(
-        "Sensitivity — higher = fewer screenshots",
-        min_value=1.0,
-        max_value=40.0,
-        value=10.0,
-        step=0.5,
-    )
-    min_gap = st.slider(
-        "Minimum seconds between screenshots",
-        min_value=1.0,
-        max_value=15.0,
-        value=3.0,
-        step=0.5,
-    )
-    sample_interval = st.slider(
-        "Check every (seconds)",
-        min_value=0.25,
-        max_value=2.0,
-        value=0.5,
-        step=0.25,
-    )
-
     cache_path = None
     if uploaded is not None and not over_size:
         cache_path = ensure_upload_cached(uploaded)
-        if cache_path is not None:
-            crop_margins = render_video_crop_ui(cache_path)
-            st.session_state["crop_margins_for_pipeline"] = crop_margins
+        st.session_state["crop_margins_for_pipeline"] = get_crop_margins()
 
     run = st.button(
         "Generate",
@@ -313,9 +291,6 @@ def run_app() -> None:
                 result = run_screenshot_pipeline(
                     str(cache_path),
                     filename=uploaded.name,
-                    change_threshold=change_threshold,
-                    min_gap=min_gap,
-                    sample_interval=sample_interval,
                     crop_left_pct=crop_margins["left"],
                     crop_right_pct=crop_margins["right"],
                     crop_top_pct=crop_margins["top"],

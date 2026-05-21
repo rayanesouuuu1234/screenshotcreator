@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 from pathlib import Path
-from typing import Any
 
 import cv2
 import numpy as np
@@ -29,36 +28,6 @@ def apply_crop_margins_bgr(
     if right - left < 10 or bottom - top < 10:
         return frame
     return frame[top:bottom, left:right]
-
-
-def margins_from_box(box: dict[str, Any] | tuple | list, image_width: int, image_height: int) -> dict[str, float]:
-    """Convert pixel crop box to margin percentages."""
-    if isinstance(box, (tuple, list)) and len(box) >= 4:
-        left = float(box[0])
-        top = float(box[1])
-        width = float(box[2])
-        height = float(box[3])
-    elif isinstance(box, dict):
-        left = float(box.get("left", 0))
-        top = float(box.get("top", 0))
-        width = float(box.get("width", image_width))
-        height = float(box.get("height", image_height))
-    else:
-        return {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 0.0}
-
-    image_width = max(1, int(image_width))
-    image_height = max(1, int(image_height))
-    width = max(1.0, min(width, float(image_width)))
-    height = max(1.0, min(height, float(image_height)))
-    left = max(0.0, min(left, float(image_width - 1)))
-    top = max(0.0, min(top, float(image_height - 1)))
-
-    return {
-        "left": round(100.0 * left / image_width, 1),
-        "right": round(100.0 * (image_width - left - width) / image_width, 1),
-        "top": round(100.0 * top / image_height, 1),
-        "bottom": round(100.0 * (image_height - top - height) / image_height, 1),
-    }
 
 
 def load_preview_frame_bgr(video_path: str | Path) -> np.ndarray | None:

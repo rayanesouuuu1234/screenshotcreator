@@ -5,7 +5,7 @@ Turns a walkthrough screen recording into a **PDF** with packed, timestamped scr
 ## Output
 
 - Multiple screenshots per page when they fit; single shots scale up to fill the page
-- Transcript appendix — small type, fills each page before continuing
+- Per-shot transcript captions and a full transcript appendix
 - No bundled AI prompts; consultants use the document in their own FDD workflow
 
 ## Setup
@@ -21,9 +21,8 @@ streamlit run app.py
 
 | Control | Effect |
 |---------|--------|
-| **Sensitivity** | Higher = fewer screenshots (compares vs last saved frame; tuned for white UIs) |
-| **Minimum seconds between screenshots** | Reduces duplicates during animations |
-| **Check every (seconds)** | Sample rate (default 0.5s) |
 | **Crop** | Optional trim sliders (left/right/top/bottom %) with live preview |
+
+Upload a video and click **Generate**. Detection settings use built-in defaults.
 
 Outputs: `outputs/screenshots/`, `outputs/screenshots.json`, generated `.pdf`.

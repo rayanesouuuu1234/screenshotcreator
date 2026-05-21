@@ -19,6 +19,7 @@ from utils.frame_quality import is_visually_empty_bgr
 
 SCREENSHOT_DIR = Path("outputs/screenshots")
 DEFAULT_MAX_SCREENSHOTS = 80
+DEFAULT_MAX_GAP_SEC = 60.0
 DEBOUNCE_SAMPLES = 2
 
 ProgressCb = Callable[[str, int], None] | None
@@ -55,7 +56,13 @@ def _prepare_frame(frame: np.ndarray, width: int = 320) -> np.ndarray:
     return cv2.GaussianBlur(gray, (5, 5), 0)
 
 
-def _save_screenshot(frame: np.ndarray, timestamp: float, change_percent: float) -> dict:
+def _save_screenshot(
+    frame: np.ndarray,
+    timestamp: float,
+    change_percent: float,
+    *,
+    capture_reason: str = "change",
+) -> dict:
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
     path = SCREENSHOT_DIR / _format_filename(timestamp)
     cv2.imwrite(str(path), frame)
@@ -64,6 +71,7 @@ def _save_screenshot(frame: np.ndarray, timestamp: float, change_percent: float)
         "label": format_timestamp(timestamp),
         "path": str(path),
         "change_percent": float(change_percent),
+        "capture_reason": capture_reason,
     }
 
 
@@ -86,8 +94,28 @@ def _try_save_screenshot(
     if is_near_duplicate(last_saved_hash, frame_hash):
         return False, last_saved_hash
 
-    screenshots.append(_save_screenshot(frame, timestamp, change_percent))
+    screenshots.append(
+        _save_screenshot(frame, timestamp, change_percent, capture_reason="change")
+    )
     return True, frame_hash
+
+
+def _force_save_screenshot(
+    screenshots: list[dict],
+    *,
+    frame: np.ndarray,
+    prepared: np.ndarray,
+    timestamp: float,
+    max_screenshots: int,
+) -> tuple[bool, int | None]:
+    """Interval capture: bypass debounce and near-duplicate checks."""
+    if len(screenshots) >= max_screenshots:
+        return False, None
+    if is_visually_empty_bgr(frame):
+        return False, None
+
+    screenshots.append(_save_screenshot(frame, timestamp, 0.0, capture_reason="interval"))
+    return True, dhash(prepared)
 
 
 def detect_scenes(
@@ -96,6 +124,7 @@ def detect_scenes(
     change_threshold: float = 10.0,
     min_gap: float = 3.0,
     sample_interval: float = 0.5,
+    max_gap_sec: float = DEFAULT_MAX_GAP_SEC,
     max_screenshots: int = DEFAULT_MAX_SCREENSHOTS,
     crop_left_pct: float = 0.0,
     crop_right_pct: float = 0.0,
@@ -105,10 +134,11 @@ def detect_scenes(
     on_progress: ProgressCb = None,
 ) -> list[dict]:
     """
-    Save screenshots for substantial visual changes.
+    Save screenshots for substantial visual changes and periodic interval captures.
 
-    Uses background-masked pixel diff + edge structure vs the last saved frame,
-    with debouncing, in-loop empty-frame skipping, and perceptual-hash dedup.
+    Change-based: masked diff vs last saved frame, debounced, with hash dedup.
+    Interval: if max_gap_sec > 0 and no save for that long on a non-empty frame,
+    force a capture (bypasses debounce and dedup).
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -119,8 +149,10 @@ def detect_scenes(
     duration = duration if duration > 0 else 1.0
     sample_interval = max(0.1, float(sample_interval))
     min_gap = max(0.0, float(min_gap))
+    max_gap_sec = float(max_gap_sec)
     max_screenshots = max(1, int(max_screenshots))
     threshold = float(change_threshold)
+    interval_enabled = max_gap_sec > 0.0
 
     screenshots: list[dict] = []
     last_saved_prepared: np.ndarray | None = None
@@ -167,31 +199,50 @@ def detect_scenes(
             t += sample_interval
             continue
 
-        change_score = compute_scene_change_score(prepared, last_saved_prepared)
-        enough_gap = (t - last_saved_at) >= min_gap
+        interval_due = interval_enabled and (t - last_saved_at) >= max_gap_sec
+        saved_this_tick = False
 
-        if change_score >= threshold:
-            consecutive_above_threshold += 1
-            pending_score = max(pending_score, change_score)
-        else:
-            consecutive_above_threshold = 0
-            pending_score = 0.0
-
-        if consecutive_above_threshold >= DEBOUNCE_SAMPLES and enough_gap:
-            saved, last_saved_hash = _try_save_screenshot(
+        if interval_due and not is_visually_empty_bgr(frame):
+            saved, last_saved_hash = _force_save_screenshot(
                 screenshots,
                 frame=frame,
                 prepared=prepared,
                 timestamp=t,
-                change_percent=pending_score,
-                last_saved_hash=last_saved_hash,
                 max_screenshots=max_screenshots,
             )
             if saved:
                 last_saved_prepared = prepared.copy()
                 last_saved_at = t
-            consecutive_above_threshold = 0
-            pending_score = 0.0
+                saved_this_tick = True
+                consecutive_above_threshold = 0
+                pending_score = 0.0
+
+        if not saved_this_tick:
+            change_score = compute_scene_change_score(prepared, last_saved_prepared)
+            enough_gap = (t - last_saved_at) >= min_gap
+
+            if change_score >= threshold:
+                consecutive_above_threshold += 1
+                pending_score = max(pending_score, change_score)
+            else:
+                consecutive_above_threshold = 0
+                pending_score = 0.0
+
+            if consecutive_above_threshold >= DEBOUNCE_SAMPLES and enough_gap:
+                saved, last_saved_hash = _try_save_screenshot(
+                    screenshots,
+                    frame=frame,
+                    prepared=prepared,
+                    timestamp=t,
+                    change_percent=pending_score,
+                    last_saved_hash=last_saved_hash,
+                    max_screenshots=max_screenshots,
+                )
+                if saved:
+                    last_saved_prepared = prepared.copy()
+                    last_saved_at = t
+                consecutive_above_threshold = 0
+                pending_score = 0.0
 
         t += sample_interval
 

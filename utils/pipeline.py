@@ -13,8 +13,10 @@ from utils.transcriber import transcribe_video
 
 ProgressCb = Callable[[str, int], None] | None
 
+DEFAULT_CHANGE_THRESHOLD = 10.0
 DEFAULT_MIN_GAP = 3.0
 DEFAULT_SAMPLE_INTERVAL = 0.5
+DEFAULT_MAX_GAP_SEC = 60.0
 DEFAULT_MAX_SCREENSHOTS = 80
 DEFAULT_WHISPER_MODEL = "base"
 
@@ -38,9 +40,10 @@ def run_screenshot_pipeline(
     video_path: str,
     *,
     filename: str,
-    change_threshold: float,
+    change_threshold: float = DEFAULT_CHANGE_THRESHOLD,
     min_gap: float = DEFAULT_MIN_GAP,
     sample_interval: float = DEFAULT_SAMPLE_INTERVAL,
+    max_gap_sec: float = DEFAULT_MAX_GAP_SEC,
     crop_left_pct: float = 0.0,
     crop_right_pct: float = 0.0,
     crop_top_pct: float = 0.0,
@@ -59,6 +62,7 @@ def run_screenshot_pipeline(
         change_threshold=change_threshold,
         min_gap=min_gap,
         sample_interval=sample_interval,
+        max_gap_sec=max_gap_sec,
         max_screenshots=DEFAULT_MAX_SCREENSHOTS,
         crop_left_pct=crop_left_pct,
         crop_right_pct=crop_right_pct,
@@ -78,12 +82,14 @@ def run_screenshot_pipeline(
     )
 
     transcript_text = str(transcript.get("text") or "")
+    segments = transcript.get("segments") or []
 
     progress("Building document", 94)
     pdf_path = create_screenshots_pdf(
         screenshots,
         video_filename=filename,
         transcript_text=transcript_text,
+        segments=segments if isinstance(segments, list) else [],
     )
 
     result: dict[str, Any] = {
@@ -92,6 +98,7 @@ def run_screenshot_pipeline(
             "change_threshold": float(change_threshold),
             "min_gap": float(min_gap),
             "sample_interval": float(sample_interval),
+            "max_gap_sec": float(max_gap_sec),
             "max_screenshots": DEFAULT_MAX_SCREENSHOTS,
             "crop_left_pct": float(crop_left_pct),
             "crop_right_pct": float(crop_right_pct),
